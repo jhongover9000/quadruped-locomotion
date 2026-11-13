@@ -1,12 +1,19 @@
-# Stand-in robot: Unitree Go1 from MuJoCo Menagerie.
-# Fetch the model first:   python scripts/setup/download_stand_in.py
-# Values are typical Go1 sim settings -- verify against the downloaded XML.
+# Stand-in robot: Unitree Go1.
+# mjlab ships a Go1 model (derived from MuJoCo Menagerie); a "mjlab:" prefix resolves
+# inside the installed mjlab package, so nothing needs downloading.
 name: go1
-model_path: assets/robots/stand_in/unitree_go1/scene.xml
-base_body: trunk
-foot_geoms: [FR, FL, RR, RL]          # order must match robots.config.LEGS
+model_path: mjlab:asset_zoo/robots/unitree_go1/xmls/go1.xml
 
-# Policy action / observation order. Never reorder after training.
+# Names below must exist in the model. Patterns are regular expressions.
+base_body: trunk
+foot_geoms: [FR_foot_collision, FL_foot_collision, RR_foot_collision, RL_foot_collision]
+foot_sites: [FR, FL, RR, RL]                  # points at the feet, for foot velocity
+collision_geoms: '.*_collision\d*'            # every geom that should collide
+base_contact_geoms: [trunk_collision, head_collision]       # ground contact ends the episode
+undesired_contact_geoms: ['.*_thigh_collision\d*', '.*_calf_collision\d*']  # penalized
+
+# Policy action / observation order. Must match the model's joint order; never
+# reorder after training.
 joint_names:
   - FR_hip_joint
   - FR_thigh_joint
@@ -21,28 +28,35 @@ joint_names:
   - RL_thigh_joint
   - RL_calf_joint
 
-# A 3-vector means [hip, thigh, calf], repeated for all four legs.
-default_joint_pos: [0.0, 0.9, -1.8]   # rad
-base_height_nominal: 0.27             # m, trunk height in the default stance
+# 12 values, or a 3-vector [hip, thigh, calf] repeated for every leg. rad.
+default_joint_pos: [0.1, 0.9, -1.8, -0.1, 0.9, -1.8, 0.1, 0.9, -1.8, -0.1, 0.9, -1.8]
+base_height_nominal: 0.278            # m, trunk height in the default stance (also the spawn height)
 mass_nominal: 12.7                    # kg (approximate)
 
 actuator:
   model: ideal_pd                     # ideal_pd -> analytic / actuator_net after sysID
-  kp: 20.0                            # N*m/rad
-  kd: 0.5                             # N*m*s/rad
+  # Gains place each joint's PD loop at a 10 Hz natural frequency on its reflected
+  # inertia:  kp = I_arm * w_n^2,   kd = 2 * zeta * I_arm * w_n   (w_n = 2*pi*10, zeta = 2)
+  kp: [15.895, 15.895, 35.764]        # N*m/rad   [hip, thigh, calf]
+  kd: [1.012, 1.012, 2.277]           # N*m*s/rad
   torque_limit: [23.7, 23.7, 35.55]   # N*m
   velocity_limit: [30.1, 30.1, 20.06] # rad/s
-  armature: [0.01, 0.01, 0.01]        # kg*m^2, reflected rotor inertia N^2 * I_rotor
+  # Reflected rotor inertia N^2 * I_rotor, with I_rotor = 1.11842e-4 kg*m^2 and
+  # gear ratio 6 (hip, thigh) or 9 (calf).
+  armature: [0.004026, 0.004026, 0.009059]  # kg*m^2
+  frictionloss: null                  # N*m per joint once measured (null keeps the model's value)
+  viscous_damping: null               # N*m*s/rad per joint once measured
   params: {}
 
-# Per-episode ranges. Widen anything you are unsure about.
+# Ranges for per-environment randomization. Widen anything you are unsure about.
 domain_randomization:
-  friction: [0.4, 1.25]
-  added_base_mass: [-1.0, 3.0]        # kg
-  base_com_offset: [-0.03, 0.03]      # m, each axis
-  motor_strength: [0.9, 1.1]          # torque scale
+  friction: [0.3, 1.5]                # foot sliding friction
+  added_base_mass: [-1.0, 2.0]        # kg, point mass added at the trunk COM
+  base_com_offset: [-0.025, 0.025]    # m, each axis
   kp_scale: [0.9, 1.1]
   kd_scale: [0.9, 1.1]
-  action_delay_steps: [0, 1]          # control steps
-  push_interval_s: 8.0
-  push_velocity: 0.5                  # m/s
+  motor_strength: [0.9, 1.1]          # torque-limit scale
+  encoder_bias: 0.015                 # rad, constant offset per joint (half-width)
+  action_delay_steps: [0, 1]          # control steps of command latency
+  push_interval_s: [5.0, 10.0]
+  push_velocity: 0.5                  # m/s, planar velocity kick

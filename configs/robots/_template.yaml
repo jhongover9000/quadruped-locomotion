@@ -1,10 +1,17 @@
 # Template for the team's robot. Copy to configs/robots/<name>.yaml and fill in.
 # Files starting with "_" are skipped by tests and cannot be loaded by mistake.
-# See docs/measurement_protocol.md for how to get each number.
+# See docs/measurement_protocol.md for how to get each number, and go1.yaml for a
+# complete example.
 name: TODO
 model_path: assets/robots/custom/mjcf/TODO.xml   # from scripts/convert_urdf_to_mjcf.py
+
 base_body: TODO
-foot_geoms: [TODO_FR, TODO_FL, TODO_RR, TODO_RL]
+foot_geoms: [TODO_FR, TODO_FL, TODO_RR, TODO_RL]  # foot collision geoms, FR, FL, RR, RL
+foot_sites: [TODO_FR, TODO_FL, TODO_RR, TODO_RL]  # a site at each foot
+collision_geoms: '.*'                              # regex: geoms that should collide
+base_contact_geoms: [TODO]                         # ground contact here ends the episode
+undesired_contact_geoms: []                        # regexes: penalized contacts (thighs, shins)
+
 joint_names: []                       # TODO: 12 names, FR, FL, RR, RL x hip, thigh, calf
 default_joint_pos: [0.0, 0.0, 0.0]    # TODO: standing pose, rad
 base_height_nominal: 0.0              # TODO: m
@@ -12,11 +19,13 @@ mass_nominal: 0.0                     # TODO: weigh the assembled robot, kg
 
 actuator:
   model: ideal_pd
-  kp: 0.0                             # TODO: match the motor driver's gains
-  kd: 0.0
-  torque_limit: [0.0, 0.0, 0.0]       # TODO: from motor datasheet x gear ratio
+  kp: [0.0, 0.0, 0.0]                 # TODO: match the motor driver's gains
+  kd: [0.0, 0.0, 0.0]
+  torque_limit: [0.0, 0.0, 0.0]       # TODO: datasheet torque x gear ratio
   velocity_limit: [0.0, 0.0, 0.0]
   armature: [0.0, 0.0, 0.0]           # TODO: N^2 * I_rotor, refine with swing tests
+  frictionloss: null
+  viscous_damping: null
   params: {}
 
 domain_randomization: {}              # TODO: set ranges from measurement uncertainty

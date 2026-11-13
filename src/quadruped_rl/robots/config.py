@@ -18,20 +18,26 @@ LEGS = ("FR", "FL", "RR", "RL")
 @dataclass
 class ActuatorSpec:
     model: str                    # "ideal_pd" | "analytic" | "actuator_net"
-    kp: float                     # N*m/rad
-    kd: float                     # N*m*s/rad
+    kp: list[float]               # per joint, N*m/rad
+    kd: list[float]               # per joint, N*m*s/rad
     torque_limit: list[float]     # per joint, N*m
     velocity_limit: list[float]   # per joint, rad/s
     armature: list[float]         # per joint, kg*m^2
+    frictionloss: list[float] | None = None     # per joint, N*m (None: keep model value)
+    viscous_damping: list[float] | None = None  # per joint, N*m*s/rad
     params: dict = field(default_factory=dict)  # model-specific: delay, friction, net path
 
 
 @dataclass
 class RobotConfig:
     name: str
-    model_path: Path
+    model_path: str               # repo-relative path, or "mjlab:<path inside mjlab>"
     base_body: str
     foot_geoms: list[str]
+    foot_sites: list[str]
+    collision_geoms: str
+    base_contact_geoms: list[str]
+    undesired_contact_geoms: list[str]
     joint_names: list[str]
     default_joint_pos: list[float]
     base_height_nominal: float
@@ -43,21 +49,39 @@ class RobotConfig:
     def num_joints(self) -> int:
         return len(self.joint_names)
 
+    @property
+    def model_file(self) -> Path:
+        """Absolute path to the MJCF file (resolves the "mjlab:" prefix)."""
+        if self.model_path.startswith("mjlab:"):
+            from mjlab import MJLAB_SRC_PATH  # only needed for mjlab-bundled models
+
+            return Path(MJLAB_SRC_PATH) / self.model_path.removeprefix("mjlab:")
+        return REPO_ROOT / self.model_path
+
     def validate(self) -> None:
         n = self.num_joints
         if n == 0:
             raise ValueError(f"{self.name}: joint_names is empty")
         per_joint = {
             "default_joint_pos": self.default_joint_pos,
+            "actuator.kp": self.actuator.kp,
+            "actuator.kd": self.actuator.kd,
             "actuator.torque_limit": self.actuator.torque_limit,
             "actuator.velocity_limit": self.actuator.velocity_limit,
             "actuator.armature": self.actuator.armature,
         }
+        if self.actuator.frictionloss is not None:
+            per_joint["actuator.frictionloss"] = self.actuator.frictionloss
+        if self.actuator.viscous_damping is not None:
+            per_joint["actuator.viscous_damping"] = self.actuator.viscous_damping
         for key, values in per_joint.items():
             if len(values) != n:
                 raise ValueError(f"{self.name}: {key} has {len(values)} entries, expected {n}")
-        if len(self.foot_geoms) != len(LEGS):
-            raise ValueError(f"{self.name}: need {len(LEGS)} foot geoms, got {len(self.foot_geoms)}")
+        for key in ("foot_geoms", "foot_sites"):
+            if len(getattr(self, key)) != len(LEGS):
+                raise ValueError(f"{self.name}: need {len(LEGS)} {key}, got {len(getattr(self, key))}")
+        if min(self.actuator.kp) <= 0:
+            raise ValueError(f"{self.name}: every actuator.kp must be positive")
 
 
 def _per_joint(value, n: int) -> list[float]:
@@ -71,25 +95,40 @@ def _per_joint(value, n: int) -> list[float]:
 
 
 def load_robot(name: str) -> RobotConfig:
-    raw = load_group("robots", name)
+    """Load and validate configs/robots/<name>.yaml."""
+    return robot_from_dict(load_group("robots", name))
+
+
+def robot_from_dict(raw: dict) -> RobotConfig:
+    """Build a RobotConfig from a YAML mapping (also used for configs saved with runs)."""
     n = len(raw["joint_names"])
     act = raw["actuator"]
+
+    def optional(key):
+        return None if act.get(key) is None else _per_joint(act[key], n)
+
     cfg = RobotConfig(
         name=raw["name"],
-        model_path=REPO_ROOT / raw["model_path"],
+        model_path=str(raw["model_path"]),
         base_body=raw["base_body"],
         foot_geoms=list(raw["foot_geoms"]),
+        foot_sites=list(raw["foot_sites"]),
+        collision_geoms=raw.get("collision_geoms", ".*"),
+        base_contact_geoms=list(raw.get("base_contact_geoms") or []),
+        undesired_contact_geoms=list(raw.get("undesired_contact_geoms") or []),
         joint_names=list(raw["joint_names"]),
         default_joint_pos=_per_joint(raw["default_joint_pos"], n),
         base_height_nominal=float(raw["base_height_nominal"]),
         mass_nominal=float(raw["mass_nominal"]),
         actuator=ActuatorSpec(
             model=act["model"],
-            kp=float(act["kp"]),
-            kd=float(act["kd"]),
+            kp=_per_joint(act["kp"], n),
+            kd=_per_joint(act["kd"], n),
             torque_limit=_per_joint(act["torque_limit"], n),
             velocity_limit=_per_joint(act["velocity_limit"], n),
             armature=_per_joint(act.get("armature", 0.0), n),
+            frictionloss=optional("frictionloss"),
+            viscous_damping=optional("viscous_damping"),
             params=act.get("params") or {},
         ),
         domain_randomization=raw.get("domain_randomization") or {},

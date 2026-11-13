@@ -1,7 +1,5 @@
-"""Physics backends behind one interface.
+"""Other physics backends.
 
-mujoco_cpu   plain MuJoCo: debugging, the viewer, and sim2sim checks
-mjlab        MuJoCo Warp on NVIDIA GPUs (Linux/WSL2): main training backend
-mjx          MuJoCo MJX / Playground (JAX): alternative GPU backend
-
-Choose the GPU backend once the training GPU is known."""
+Training runs on mjlab (MuJoCo Warp on the GPU), built in envs/builder.py.
+mujoco_cpu.py will run trained policies in plain CPU MuJoCo for sim2sim checks.
+"""

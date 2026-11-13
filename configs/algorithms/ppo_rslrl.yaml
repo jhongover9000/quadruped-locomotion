@@ -1,0 +1,4 @@
+# Reference PPO from rsl_rl (the trainer mjlab uses), run on exactly the same
+# environment as ours. If this learns and ours does not, the bug is in our PPO.
+inherit: algorithms/ppo.yaml
+name: ppo_rslrl

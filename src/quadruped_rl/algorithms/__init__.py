@@ -10,6 +10,7 @@ import importlib
 
 _REGISTRY = {
     "ppo": "quadruped_rl.algorithms.ppo.agent:PPOAgent",
+    "ppo_rslrl": "quadruped_rl.algorithms.ppo.reference:RslRlPPOAgent",
     "deepmimic": "quadruped_rl.algorithms.deepmimic.agent:DeepMimicAgent",
     "amp": "quadruped_rl.algorithms.amp.agent:AMPAgent",
     "supermimic": "quadruped_rl.algorithms.supermimic.agent:SuperMimicAgent",

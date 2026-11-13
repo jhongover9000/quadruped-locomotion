@@ -1,7 +1,10 @@
-# Does a lower body help? Fix base height per run and compare stability, CoT, jerk.
+# Does a lower body help? Hold a target base height per run and compare
+# stability, cost of transport, and jerk.
 task: flat_velocity
 robot: go1
 algorithms: [ppo]
 seeds: [0, 1, 2]
-grid:                          # [min, max] fixed to one value per run (Go1 values)
-  commands.base_height: [[0.22, 0.22], [0.25, 0.25], [0.28, 0.28], [0.31, 0.31]]
+fixed:                         # applied to every run
+  rewards.base_height: -30.0
+grid:                          # m, Go1 values
+  reward_params.base_height_target: [0.22, 0.25, 0.28, 0.31]

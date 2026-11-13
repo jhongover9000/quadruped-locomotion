@@ -1,8 +1,9 @@
+# Our PPO implementation (src/quadruped_rl/algorithms/ppo/).
 name: ppo
 default_task: flat_velocity
 num_envs: 4096
 steps_per_env: 24             # rollout length per update
-max_iterations: 3000
+max_iterations: 1500        # flat ground usually converges well before this
 learning_rate: 1.0e-3
 adaptive_lr_target_kl: 0.01
 num_epochs: 5
@@ -17,4 +18,4 @@ init_noise_std: 1.0
 actor_hidden: [512, 256, 128]
 critic_hidden: [512, 256, 128]
 activation: elu
-save_interval: 200
+save_interval: 100

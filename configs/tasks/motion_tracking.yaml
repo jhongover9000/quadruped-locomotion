@@ -15,7 +15,7 @@ commands:
   ang_vel_z: [0.0, 0.0]
 
 observations:
-  policy: [base_ang_vel, projected_gravity, joint_pos_rel, joint_vel, last_action,
+  actor: [base_ang_vel, projected_gravity, joint_pos_rel, joint_vel, last_action,
            motion_phase, ref_future_frames]
   critic: [base_lin_vel, base_ang_vel, projected_gravity, joint_pos_rel, joint_vel,
            last_action, foot_contacts, motion_phase, ref_future_frames]

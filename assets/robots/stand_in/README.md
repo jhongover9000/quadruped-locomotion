@@ -1,7 +1,8 @@
-# Stand-in robot
+# Stand-in robots
 
-Downloaded from MuJoCo Menagerie, not committed:
+The Go1 used by `configs/robots/go1.yaml` ships with mjlab, so nothing is needed here.
 
-    python scripts/setup/download_stand_in.py
+To try another MuJoCo Menagerie robot (for example the Go2), download it here, not
+committed:
 
-Configured in `configs/robots/go1.yaml`.
+    python scripts/setup/download_stand_in.py --robot unitree_go2

@@ -11,40 +11,51 @@ terrain:
 
 commands:
   resample_interval_s: 10.0
+  standing_fraction: 0.1      # share of envs commanded to stand still
   lin_vel_x: [-1.0, 1.0]      # m/s
   lin_vel_y: [-0.5, 0.5]      # m/s
   ang_vel_z: [-1.0, 1.0]      # rad/s
-  base_height: null           # set a [min, max] range to make height a command
 
 observations:
-  # Actor sees only what the real robot can measure.
-  policy: [base_ang_vel, projected_gravity, velocity_command, joint_pos_rel, joint_vel, last_action]
-  # Critic is training-only, so it may use privileged state.
+  # Actor: only what the real robot can measure. Terms live in envs/observations.py.
+  actor: [base_ang_vel, projected_gravity, velocity_command, joint_pos_rel, joint_vel, last_action]
+  # Critic: training only, so it may use privileged state.
   critic: [base_lin_vel, base_ang_vel, projected_gravity, velocity_command, joint_pos_rel,
-           joint_vel, last_action, foot_contacts, friction]
-  noise:                      # uniform noise half-widths added to the policy observations
+           joint_vel, last_action, foot_contacts]
+  noise:                      # uniform noise half-widths on actor observations
     base_ang_vel: 0.2
     projected_gravity: 0.05
     joint_pos_rel: 0.01
     joint_vel: 1.5
 
 action:
-  type: joint_position_residual
-  scale: 0.25                 # q_target = q_default + scale * action
+  type: joint_position_residual   # q_target = q_default + scale_j * action
+  scale: 0.25
+  scale_mode: effort_relative     # scale_j = scale * torque_limit_j / kp_j; "absolute": scale_j = scale (rad)
 
-rewards:                      # term name -> weight; terms live in envs/rewards.py
+rewards:                      # term -> weight; terms live in envs/rewards.py. 0 disables a term.
   track_lin_vel_xy: 1.0
   track_ang_vel_z: 0.5
   lin_vel_z: -2.0
   ang_vel_xy: -0.05
   flat_orientation: -0.5
-  torques: -1.0e-4
+  torques: -2.0e-4
   joint_acc: -2.5e-7
   action_rate: -0.01
-  feet_air_time: 0.25
+  joint_pos_limits: -10.0
+  feet_air_time: 1.0
   undesired_contacts: -1.0
-tracking_sigma: 0.25
+  base_height: 0.0            # enable with a negative weight and reward_params.base_height_target
+
+reward_params:
+  tracking_sigma: 0.25        # exp(-error^2 / sigma)
+  air_time_target: 0.5        # s; feet_air_time rewards (t_air - target) at each touchdown
+  base_height_target: null    # m
+
+# Clip each step's total reward at 0. Without it, early policies whose penalties
+# outweigh tracking reward learn to fall over to end the episode.
+clip_reward_at_zero: true
 
 terminations:
-  base_contact: true
-  bad_orientation_rad: 1.0
+  base_contact: true          # base_contact_geoms touch the ground
+  bad_orientation_rad: 1.0    # tilt beyond this ends the episode
