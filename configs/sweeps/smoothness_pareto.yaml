@@ -1,0 +1,8 @@
+# Trace a speed-vs-jerk Pareto front per method by sweeping smoothness penalties.
+task: flat_velocity
+robot: go1
+algorithms: [ppo, deepmimic, amp]
+seeds: [0, 1, 2]
+grid:                          # dotted keys override the task config
+  rewards.action_rate: [0.0, -0.005, -0.01, -0.02, -0.05]
+  rewards.joint_acc: [0.0, -2.5e-7, -1.0e-6]

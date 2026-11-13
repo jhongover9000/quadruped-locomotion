@@ -1,0 +1,50 @@
+# Velocity tracking on flat ground: the baseline locomotion task.
+name: flat_velocity
+
+sim:
+  physics_dt: 0.005           # s
+  decimation: 4               # policy every 4 physics steps -> 50 Hz control
+  episode_length_s: 20.0
+
+terrain:
+  type: flat
+
+commands:
+  resample_interval_s: 10.0
+  lin_vel_x: [-1.0, 1.0]      # m/s
+  lin_vel_y: [-0.5, 0.5]      # m/s
+  ang_vel_z: [-1.0, 1.0]      # rad/s
+  base_height: null           # set a [min, max] range to make height a command
+
+observations:
+  # Actor sees only what the real robot can measure.
+  policy: [base_ang_vel, projected_gravity, velocity_command, joint_pos_rel, joint_vel, last_action]
+  # Critic is training-only, so it may use privileged state.
+  critic: [base_lin_vel, base_ang_vel, projected_gravity, velocity_command, joint_pos_rel,
+           joint_vel, last_action, foot_contacts, friction]
+  noise:                      # uniform noise half-widths added to the policy observations
+    base_ang_vel: 0.2
+    projected_gravity: 0.05
+    joint_pos_rel: 0.01
+    joint_vel: 1.5
+
+action:
+  type: joint_position_residual
+  scale: 0.25                 # q_target = q_default + scale * action
+
+rewards:                      # term name -> weight; terms live in envs/rewards.py
+  track_lin_vel_xy: 1.0
+  track_ang_vel_z: 0.5
+  lin_vel_z: -2.0
+  ang_vel_xy: -0.05
+  flat_orientation: -0.5
+  torques: -1.0e-4
+  joint_acc: -2.5e-7
+  action_rate: -0.01
+  feet_air_time: 0.25
+  undesired_contacts: -1.0
+tracking_sigma: 0.25
+
+terminations:
+  base_contact: true
+  bad_orientation_rad: 1.0

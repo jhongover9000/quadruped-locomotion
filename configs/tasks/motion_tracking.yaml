@@ -1,0 +1,32 @@
+# Reference-motion tracking for DeepMimic and SuperMimic-style methods.
+inherit: tasks/flat_velocity.yaml
+name: motion_tracking
+
+motions:
+  dir: data/motions/retargeted        # or data/motions/trajopt
+  clips: [trot_forward]
+  reference_state_init: true          # start episodes at random clip phases
+  future_frames: 10                   # reference frames the policy sees ahead
+  max_pose_error_rad: 0.8             # early termination when far off the clip
+
+commands:
+  lin_vel_x: [0.0, 0.0]               # the clip defines the motion
+  lin_vel_y: [0.0, 0.0]
+  ang_vel_z: [0.0, 0.0]
+
+observations:
+  policy: [base_ang_vel, projected_gravity, joint_pos_rel, joint_vel, last_action,
+           motion_phase, ref_future_frames]
+  critic: [base_lin_vel, base_ang_vel, projected_gravity, joint_pos_rel, joint_vel,
+           last_action, foot_contacts, motion_phase, ref_future_frames]
+
+# Each imitation term is exp(-k * error^2); weights/scales follow Peng et al. 2020
+# ("Learning Agile Robotic Locomotion Skills by Imitating Animals").
+rewards:
+  _replace: true                      # drop the velocity-tracking rewards
+  imitate_joint_pos: {weight: 0.5, scale: 5.0}
+  imitate_joint_vel: {weight: 0.05, scale: 0.1}
+  imitate_end_effector: {weight: 0.2, scale: 40.0}
+  imitate_root_pose: {weight: 0.15, scale: 20.0}
+  imitate_root_vel: {weight: 0.1, scale: 2.0}
+  action_rate: -0.005

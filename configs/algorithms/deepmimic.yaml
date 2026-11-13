@@ -1,0 +1,5 @@
+# DeepMimic = PPO optimizing the imitation reward in tasks/motion_tracking.yaml.
+inherit: algorithms/ppo.yaml
+name: deepmimic
+default_task: motion_tracking
+gamma: 0.95

@@ -1,0 +1,121 @@
+# ==============================================================
+# Python
+# ==============================================================
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.conda/
+
+# Jupyter (strip outputs before committing: `pip install nbstripout && nbstripout --install`)
+.ipynb_checkpoints/
+
+# Secrets / API keys (wandb, etc.)
+.env
+.env.*
+*.key
+
+# ==============================================================
+# Training outputs -- large and regenerable
+# Every run writes to outputs/<algo>/<task>/<timestamp>_<robot>_s<seed>/
+# ==============================================================
+outputs/
+runs/
+logs/
+multirun/
+wandb/
+mlruns/
+lightning_logs/
+events.out.tfevents.*
+
+# Checkpoints / exported models anywhere in the tree...
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.jit
+*.pkl
+*.msgpack
+checkpoints/
+# ...except policies deliberately released for hardware (tracked with Git LFS)
+!policies/released/**
+
+# Rendered media
+*.mp4
+*.avi
+*.mov
+*.gif
+*.webm
+videos/
+renders/
+# ...except small figures for docs
+!docs/media/**
+
+# GPU / JIT compilation caches (JAX, MJX, Warp)
+.jax_cache/
+jax_cache/
+.cache/
+kernel_cache/
+
+# Profiling
+*.prof
+*.nsys-rep
+*.qdrep
+
+# MuJoCo writes this to the working directory on errors
+MUJOCO_LOG.TXT
+*.mjb
+
+# ==============================================================
+# Data -- raw recordings stay off-repo (share via team drive)
+# ==============================================================
+data/motions/raw/*
+data/sysid/raw/*
+data/hardware_logs/*
+*.bag
+*.mcap
+*.db3
+*.h5
+*.hdf5
+!data/**/.gitkeep
+!data/**/README.md
+
+# ==============================================================
+# Robot assets
+# ==============================================================
+# Stand-in robot is downloaded from MuJoCo Menagerie, not committed
+assets/robots/stand_in/*
+!assets/robots/stand_in/README.md
+
+# Native CAD files live in the CAD tool (Onshape / Fusion / SolidWorks PDM)
+*.SLDPRT
+*.SLDASM
+*.sldprt
+*.sldasm
+*.f3d
+*.f3z
+*.ipt
+*.iam
+
+# ==============================================================
+# Editors / OS
+# ==============================================================
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

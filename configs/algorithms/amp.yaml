@@ -1,0 +1,13 @@
+# Adversarial Motion Priors: task reward + discriminator style reward.
+inherit: algorithms/ppo.yaml
+name: amp
+default_task: rough_velocity
+amp:
+  motion_dir: data/motions/retargeted
+  disc_hidden: [1024, 512]
+  disc_obs_frames: 2          # consecutive states shown to the discriminator
+  disc_learning_rate: 1.0e-4
+  grad_penalty: 10.0
+  replay_buffer_size: 1000000
+  task_reward_weight: 0.5
+  style_reward_weight: 0.5

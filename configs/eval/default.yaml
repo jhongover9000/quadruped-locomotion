@@ -1,0 +1,26 @@
+# Identical evaluation for every method: same seeds, terrains, commands, metrics.
+seeds: [0, 1, 2, 3, 4]
+episodes_per_seed: 32
+episode_length_s: 20.0
+terrain_levels: [0, 3, 6, 9]
+
+command_set:                  # [vx m/s, vy m/s, wz rad/s]
+  - [0.5, 0.0, 0.0]
+  - [1.0, 0.0, 0.0]
+  - [1.5, 0.0, 0.0]
+  - [0.0, 0.0, 1.0]
+  - [0.5, 0.3, 0.5]
+
+max_speed_test:               # raise vx until fewer than success_fraction episodes survive
+  start: 0.5
+  step: 0.25
+  stop: 4.0
+  success_fraction: 0.9
+
+perturbations:
+  push_velocity: [0.5, 1.0]   # m/s
+  added_mass: [0.0, 3.0]      # kg
+  friction: [0.3, 1.0]
+
+metrics: [velocity_tracking_error, success_rate, max_stable_speed, joint_jerk,
+          action_smoothness, torque_hf_fraction, cost_of_transport, foot_slip]

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quadruped-rl"
+version = "0.1.0"
+description = "Comparing RL methods for quadruped locomotion: sim training, real2sim, and hardware deployment"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Joseph Hong" }]
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "mujoco>=3.3",
+  "pyyaml>=6.0",
+  "torch>=2.3",
+  "tensorboard>=2.16",
+  "matplotlib>=3.8",
+  "tqdm",
+]
+
+[project.optional-dependencies]
+# GPU-parallel simulation: install ONE of these once the training GPU is known.
+mjlab = ["mjlab"]                          # MuJoCo Warp; NVIDIA GPU, Linux/WSL2
+mjx = ["mujoco-mjx", "jax", "playground"]  # MuJoCo MJX / Playground (JAX)
+trajopt = ["pin>=2.7", "casadi>=3.6"]      # reference-gait trajectory optimization
+sysid = ["cma>=3.3"]                       # black-box parameter fitting
+deploy = ["onnx", "onnxruntime"]
+logging = ["wandb"]
+dev = ["pytest", "ruff", "ipykernel", "nbstripout"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

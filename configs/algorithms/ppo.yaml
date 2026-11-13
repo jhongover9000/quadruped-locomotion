@@ -1,0 +1,20 @@
+name: ppo
+default_task: flat_velocity
+num_envs: 4096
+steps_per_env: 24             # rollout length per update
+max_iterations: 3000
+learning_rate: 1.0e-3
+adaptive_lr_target_kl: 0.01
+num_epochs: 5
+num_minibatches: 4
+clip_ratio: 0.2
+gamma: 0.99
+gae_lambda: 0.95
+entropy_coef: 0.01
+value_loss_coef: 1.0
+max_grad_norm: 1.0
+init_noise_std: 1.0
+actor_hidden: [512, 256, 128]
+critic_hidden: [512, 256, 128]
+activation: elu
+save_interval: 200

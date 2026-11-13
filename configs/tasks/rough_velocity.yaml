@@ -1,0 +1,26 @@
+# Velocity tracking over a terrain curriculum. Only differences from flat are listed.
+inherit: tasks/flat_velocity.yaml
+name: rough_velocity
+
+terrain:
+  type: curriculum
+  tile_size: [8.0, 8.0]       # m
+  levels: 10                  # difficulty rows
+  tiles_per_level: 20
+  proportions:
+    smooth_slope: 0.1
+    rough_slope: 0.1
+    stairs_up: 0.2
+    stairs_down: 0.2
+    random_rough: 0.3
+    discrete_obstacles: 0.1
+  max_slope_deg: 25
+  max_step_height: 0.15       # m, scale to the robot's leg length
+  promote_fraction: 0.8       # walked > 80% of commanded distance -> harder level
+
+observations:
+  critic: [base_lin_vel, base_ang_vel, projected_gravity, velocity_command, joint_pos_rel,
+           joint_vel, last_action, foot_contacts, friction, height_scan]
+
+rewards:
+  flat_orientation: -0.2      # relax: the body must tilt on slopes

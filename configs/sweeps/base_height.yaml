@@ -1,0 +1,7 @@
+# Does a lower body help? Fix base height per run and compare stability, CoT, jerk.
+task: flat_velocity
+robot: go1
+algorithms: [ppo]
+seeds: [0, 1, 2]
+grid:                          # [min, max] fixed to one value per run (Go1 values)
+  commands.base_height: [[0.22, 0.22], [0.25, 0.25], [0.28, 0.28], [0.31, 0.31]]
