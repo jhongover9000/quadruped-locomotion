@@ -1,5 +1,6 @@
 # Velocity tracking on flat ground: the baseline locomotion task.
 name: flat_velocity
+kind: velocity               # follow a commanded velocity (see algorithms/base.py)
 
 sim:
   physics_dt: 0.005           # s

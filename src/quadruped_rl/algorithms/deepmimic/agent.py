@@ -1,11 +1,15 @@
-"""DeepMimic agent. The optimizer is PPO; the difference is the task
-(tasks/motion_tracking.yaml): imitation reward, reference state initialization, and
-early termination. Kept as its own class so it can diverge later.
+"""DeepMimic agent: PPO optimizing the imitation reward of a tracking task (reference state
+initialization, early termination), i.e. the model-free counterpart of SuperMimic on the
+same clips.
+
+Not built yet. The natural route is PPO on the SuperMimic backend's tracking environment
+(algorithms/supermimic/), so both methods see identical clips, rewards and terminations.
 
 TODO(phase 4)."""
 
-from quadruped_rl.algorithms.ppo.agent import PPOAgent
+from quadruped_rl.algorithms.base import NotImplementedAgent
 
 
-class DeepMimicAgent(PPOAgent):
-    pass
+class DeepMimicAgent(NotImplementedAgent):
+    task_kinds = ("tracking",)
+    phase = "phase 4"

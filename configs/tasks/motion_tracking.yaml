@@ -1,32 +1,32 @@
-# Reference-motion tracking for DeepMimic and SuperMimic-style methods.
-inherit: tasks/flat_velocity.yaml
+# Reference-motion tracking: follow retargeted motion-capture clips frame by frame.
+# For SuperMimic (and, later, DeepMimic on the same clips).
+#
+# The environment is the SuperMimic backend's: observations, the tracking reward and its
+# scales come from the robot's SuperMimic RobotSpec, not from this file. This file says
+# which clips, how they are sampled, and when an episode ends.
 name: motion_tracking
+kind: tracking
+
+sim:
+  episode_length_s: 10.0              # training episodes; a clip's end also ends one
 
 motions:
-  dir: data/motions/retargeted        # or data/motions/trajopt
-  clips: [trot_forward]
-  reference_state_init: true          # start episodes at random clip phases
+  # Clip library (50 Hz .npz, format in src/quadruped_rl/motions/format.py). Relative paths
+  # are looked up in this repository, then in the SuperMimic reference repository.
+  # {robot} is the robot's SuperMimic spec name.
+  dir: data/npz/{robot}
+  manifest: data/npz/{robot}/manifest.csv   # name, keep, group columns
+  train_groups: train,hard            # manifest groups used for training
+  eval_groups: holdout                # played by play.py / record.py / evaluate.py
+  exclude: null                       # regex on clip names to leave out
+  clips: null                         # or an explicit list of clip names
+  limit: null
   future_frames: 10                   # reference frames the policy sees ahead
-  max_pose_error_rad: 0.8             # early termination when far off the clip
+  sampling:
+    mode: return                      # return: favour clips the policy does badly on | uniform
+    clip_weight_alpha: 0.5            # p(clip) ~ duration^alpha (1 = uniform over frames)
+    static_bin_factor: 0.25           # down-weight stretches where the animal stands still
 
-commands:
-  lin_vel_x: [0.0, 0.0]               # the clip defines the motion
-  lin_vel_y: [0.0, 0.0]
-  ang_vel_z: [0.0, 0.0]
-
-observations:
-  actor: [base_ang_vel, projected_gravity, joint_pos_rel, joint_vel, last_action,
-           motion_phase, ref_future_frames]
-  critic: [base_lin_vel, base_ang_vel, projected_gravity, joint_pos_rel, joint_vel,
-           last_action, foot_contacts, motion_phase, ref_future_frames]
-
-# Each imitation term is exp(-k * error^2); weights/scales follow Peng et al. 2020
-# ("Learning Agile Robotic Locomotion Skills by Imitating Animals").
-rewards:
-  _replace: true                      # drop the velocity-tracking rewards
-  imitate_joint_pos: {weight: 0.5, scale: 5.0}
-  imitate_joint_vel: {weight: 0.05, scale: 0.1}
-  imitate_end_effector: {weight: 0.2, scale: 40.0}
-  imitate_root_pose: {weight: 0.15, scale: 20.0}
-  imitate_root_vel: {weight: 0.1, scale: 2.0}
-  action_rate: -0.005
+terminations:
+  root_height_error_m: null           # |reference - robot| trunk height (null: robot spec)
+  root_tilt_error: null               # trunk tilt error (null: robot spec)

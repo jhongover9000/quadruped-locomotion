@@ -26,10 +26,20 @@ def test_rough_inherits_flat():
     assert rough["rewards"]["track_lin_vel_xy"] == flat["rewards"]["track_lin_vel_xy"]
 
 
-def test_replace_drops_parent_rewards():
+def test_replace_drops_parent_entries():
+    from quadruped_rl.utils.config import deep_merge
+
+    parent = {"rewards": {"track_lin_vel_xy": 1.0, "action_rate": -0.01}}
+    merged = deep_merge(parent, {"rewards": {"_replace": True, "imitate": 0.5}})
+    assert merged["rewards"] == {"imitate": 0.5}
+    assert deep_merge(parent, {"rewards": {"imitate": 0.5}})["rewards"]["track_lin_vel_xy"] == 1.0
+
+
+def test_motion_tracking_describes_the_clip_library():
     tracking = load_group("tasks", "motion_tracking")
-    assert "track_lin_vel_xy" not in tracking["rewards"]
-    assert "_replace" not in tracking["rewards"]
+    assert tracking["kind"] == "tracking"
+    for key in ("dir", "manifest", "train_groups", "eval_groups", "future_frames"):
+        assert key in tracking["motions"]
 
 
 def test_algorithms_name_a_real_task():

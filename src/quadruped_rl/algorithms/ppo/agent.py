@@ -57,10 +57,7 @@ class PPOAgent(Agent):
 
     def train(self, num_envs: int | None = None, max_iterations: int | None = None,
               resume: Path | None = None) -> None:
-        from quadruped_rl.envs.builder import make_env
-
-        env = make_env(self.robot, self.task_cfg, num_envs or self.algo_cfg["num_envs"],
-                       self.device, seed=self.seed)
+        env = self.make_env(num_envs or self.algo_cfg["num_envs"])
         self._build_for_env(env)
         if resume is not None:
             self.load(resume)
@@ -92,6 +89,7 @@ class PPOAgent(Agent):
         logger = RunLogger(self.run_dir, CSV_COLUMNS)
         save_interval = int(c.get("save_interval", 100))
         end = self.iteration + max_iterations
+        max_hours, t_begin = c.get("max_hours"), time.perf_counter()
 
         while self.iteration < end:
             t_start = time.perf_counter()
@@ -160,6 +158,10 @@ class PPOAgent(Agent):
 
             if self.iteration % save_interval == 0 or self.iteration == end:
                 self.save(self.run_dir / "checkpoints" / f"model_{self.iteration}.pt")
+            if max_hours is not None and (time.perf_counter() - t_begin) / 3600.0 > float(max_hours):
+                print(f"max_hours ({max_hours}) reached at iteration {self.iteration}: stopping")
+                self.save(self.run_dir / "checkpoints" / f"model_{self.iteration}.pt")
+                break
         logger.close()
 
     @torch.no_grad()
@@ -245,8 +247,10 @@ class PPOAgent(Agent):
         return self.model.act_inference(actor_obs.to(self.device))
 
     def make_policy(self, env, checkpoint: Path):
+        # Inference needs only the actor, so a policy can be played on a task whose critic
+        # sees different observations (a flat-ground policy on rough terrain).
         self._build_for_env(env)
-        self.load(checkpoint)
+        self.load(checkpoint, actor_only=True)
         return env, lambda obs: self.act(obs["actor"])
 
     def save(self, path: Path) -> None:
@@ -255,9 +259,26 @@ class PPOAgent(Agent):
         torch.save({"model": self.model.state_dict(), "optimizer": self.optimizer.state_dict(),
                     "iteration": self.iteration, "learning_rate": self.learning_rate}, path)
 
-    def load(self, path: Path) -> None:
-        ckpt = torch.load(path, map_location=self.device, weights_only=True)
-        self.model.load_state_dict(ckpt["model"])
-        self.optimizer.load_state_dict(ckpt["optimizer"])
+    def load(self, path: Path, actor_only: bool = False) -> None:
+        """Restore a checkpoint. ``actor_only`` loads just what inference needs (actor,
+        its normalizer, the noise std) and leaves the critic and optimizer untouched."""
+        from quadruped_rl.algorithms.checkpoints import load_checkpoint, require_format
+
+        ckpt = load_checkpoint(path, self.device)
+        require_format(ckpt, "ppo", Path(path))
+        state = ckpt["model"]
+        saved_dim = state["actor_norm.mean"].shape[0]
+        if saved_dim != self.model.actor_norm.mean.shape[0]:
+            raise ValueError(
+                f"{path} was trained with {saved_dim} actor observations, but this task gives "
+                f"{self.model.actor_norm.mean.shape[0]}: the policy cannot run on it. Use a task "
+                "with the same observations.actor list.")
         self.iteration = int(ckpt["iteration"])
         self.learning_rate = float(ckpt["learning_rate"])
+        if actor_only:
+            actor = {k: v for k, v in state.items()
+                     if k.startswith(("actor.", "actor_norm.")) or k == "log_std"}
+            self.model.load_state_dict(actor, strict=False)
+            return
+        self.model.load_state_dict(state)
+        self.optimizer.load_state_dict(ckpt["optimizer"])

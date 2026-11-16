@@ -113,12 +113,22 @@ def add_arrow(scene, p0, p1, rgba, width: float = 0.012) -> None:
 
 
 NEIGHBOR_ALPHA = 0.3     # robots run in separate simulation worlds and pass through each other
+REFERENCE_RGBA = (0.18, 0.48, 0.98, 0.35)   # tracking: the reference motion, as a blue ghost
 
 
 def add_neighbors(model, data, opt, pert, scene, rollout: dict, t: int, robot: int, count: int) -> None:
-    """Draw the ``count`` robots nearest to ``robot`` as translucent ghosts, for context."""
+    """Draw the ``count`` robots nearest to ``robot`` as translucent ghosts, for context.
+    In a tracking recording, draw the robot's reference pose instead (blue ghost)."""
     import mujoco
 
+    if "ref_qpos" in rollout:       # tracking: the ghost is this robot's reference pose
+        data.qpos[:] = rollout["ref_qpos"][t, robot]
+        mujoco.mj_kinematics(model, data)
+        first = scene.ngeom
+        mujoco.mjv_addGeoms(model, data, opt, pert, mujoco.mjtCatBit.mjCAT_DYNAMIC.value, scene)
+        for g in range(first, scene.ngeom):
+            scene.geoms[g].rgba[:] = REFERENCE_RGBA
+        return
     if count <= 0:
         return
     xy = rollout["qpos"][t, :, :2]
@@ -146,11 +156,22 @@ def add_velocity_arrows(scene, rollout: dict, t: int, robot: int) -> None:
 def hud_lines(rollout: dict, meta: dict, t: int, robot: int) -> list[str]:
     cmd = rollout["command"][t, robot]
     v, w = rollout["base_lin_vel_b"][t, robot], rollout["base_ang_vel_b"][t, robot]
-    seg = segment_at(meta, t)
     falls = int(rollout["fell"][: t + 1, robot].sum())
-    return [
+    head = [
         f"{meta.get('run_name', 'no policy')}   {meta.get('checkpoint_name', '')}",
         f"t {t * meta['dt']:6.2f} s   robot {robot}/{rollout['qpos'].shape[1]}   falls so far {falls}",
+    ]
+    if "ref_qpos" in rollout:
+        name = str(rollout["clip_names"][robot]) if "clip_names" in rollout else "?"
+        frame, length = int(rollout["clip_frame"][t, robot]), int(rollout["clip_length"][robot])
+        return head + [
+            f"clip: {name}   frame {frame}/{length}",
+            f"reference  vx {cmd[0]:+.2f}  vy {cmd[1]:+.2f}  wz {cmd[2]:+.2f}",
+            f"actual     vx {v[0]:+.2f}  vy {v[1]:+.2f}  wz {w[2]:+.2f}",
+            "blue ghost = reference motion;  arrows: blue = reference velocity, cyan = actual",
+        ]
+    seg = segment_at(meta, t)
+    return head + [
         f"segment: {seg['label'] if seg else 'task commands (random)'}",
         f"command  vx {cmd[0]:+.2f}  vy {cmd[1]:+.2f}  wz {cmd[2]:+.2f}",
         f"actual   vx {v[0]:+.2f}  vy {v[1]:+.2f}  wz {w[2]:+.2f}",
@@ -307,15 +328,46 @@ def valid_mask(rollout: dict, meta: dict, settle_s: float = 1.0) -> np.ndarray:
     """[T, N] True where a robot has been in the current segment and alive for settle_s,
     so tracking errors don't count the speed-up after a command change or a reset."""
     T, N = rollout["fell"].shape
+    if "ref_qpos" in rollout:       # tracking episodes start on the reference: nothing to settle
+        settle_s = min(settle_s, 0.1)
     k = round(settle_s / meta["dt"])
     ok = np.ones((T, N), dtype=bool)
     starts = [round(s["start_s"] / meta["dt"]) for s in meta.get("segments") or []] or [0]
     for s in starts:
         ok[s: s + k] = False
+    resets = rollout["fell"].astype(bool)
+    if "timeout" in rollout:        # clip restarts, walking off the generated terrain
+        resets = resets | rollout["timeout"].astype(bool)
     for n in range(N):
-        for f in np.flatnonzero(rollout["fell"][:, n]):
+        for f in np.flatnonzero(resets[:, n]):
             ok[f: f + k + 1, n] = False
     return ok
+
+
+def tracking_errors(rollout: dict, meta: dict) -> dict:
+    """How closely each robot followed its clip: joint-angle and trunk-position error
+    against the reference, over the steps ``valid_mask`` keeps."""
+    ok = valid_mask(rollout, meta)
+    ref, qpos = rollout["ref_qpos"], rollout["qpos"]
+    joint_err = rollout["joint_pos"] - ref[:, :, 7:]
+    root_err = np.linalg.norm(qpos[:, :, :3] - ref[:, :, :3], axis=-1)
+    fell = rollout["fell"].astype(bool)
+    clips = []
+    for n in range(ref.shape[1]):
+        m = ok[:, n]
+        first_fall = np.flatnonzero(fell[:, n])
+        clips.append({
+            "clip": str(rollout["clip_names"][n]), "frames": int(rollout["clip_length"][n]),
+            "falls": int(fell[:, n].sum()),
+            "first_fall_s": float(first_fall[0] * meta["dt"]) if len(first_fall) else None,
+            "joint_rmse_rad": float(np.sqrt((joint_err[m, n] ** 2).mean())) if m.any() else None,
+            "root_pos_err_m": float(root_err[m, n].mean()) if m.any() else None,
+        })
+    return {
+        "joint_rmse_rad": float(np.sqrt((joint_err[ok] ** 2).mean())) if ok.any() else None,
+        "root_pos_err_m": float(root_err[ok].mean()) if ok.any() else None,
+        "clips_without_falls": sum(c["falls"] == 0 for c in clips), "clips": clips,
+    }
 
 
 def summarize(rollout: dict, meta: dict) -> dict:
@@ -353,11 +405,14 @@ def summarize(rollout: dict, meta: dict) -> dict:
         per_robot[n] = metrics.summarize(log, dt, meta["mass"])
     smooth = ({k: float(np.mean([r[k] for r in per_robot.values()])) for k in next(iter(per_robot.values()))}
               if per_robot else {})
-    return {"robots": N, "duration_s": fell.shape[0] * dt, "total_falls": int(fell.sum()),
-            "robots_that_fell": int(fell.any(0).sum()),
-            "falls_per_robot": fell.sum(0).astype(int).tolist(),
-            "segments": segments, "metrics_mean_over_robots_without_falls": smooth,
-            "robots_without_falls": len(clean)}
+    out = {"robots": N, "duration_s": fell.shape[0] * dt, "total_falls": int(fell.sum()),
+           "robots_that_fell": int(fell.any(0).sum()),
+           "falls_per_robot": fell.sum(0).astype(int).tolist(),
+           "segments": segments, "metrics_mean_over_robots_without_falls": smooth,
+           "robots_without_falls": len(clean)}
+    if "ref_qpos" in rollout:
+        out["tracking"] = tracking_errors(rollout, meta)
+    return out
 
 
 def format_summary(s: dict, meta: dict) -> str:
@@ -380,6 +435,19 @@ def format_summary(s: dict, meta: dict) -> str:
             lines.append(f"{r['label']:<28}{cs:>22}{'(no valid steps)':>24}{'':>18}{r['falls']:>7}")
     lines += ["", ("Columns: command and actual are vx m/s, vy m/s, wz rad/s; rmse excludes the "
                    "first 1 s of each segment and after each fall.")]
+    tr = s.get("tracking")
+    if tr:
+        lines += ["", "Tracking (command = the reference clip's base velocity):",
+                  f"  joint angle RMSE   {tr['joint_rmse_rad']:.3f} rad" if tr["joint_rmse_rad"] is not None else "",
+                  f"  trunk position err {tr['root_pos_err_m']:.3f} m" if tr["root_pos_err_m"] is not None else "",
+                  f"  clips without a fall: {tr['clips_without_falls']}/{len(tr['clips'])}", "",
+                  f"  {'robot':<6}{'clip':<44}{'falls':>6}{'first fall':>12}{'joint rmse':>12}{'trunk err':>11}"]
+        for i, c in enumerate(tr["clips"]):
+            ff = f"{c['first_fall_s']:.1f} s" if c["first_fall_s"] is not None else "-"
+            jr = f"{c['joint_rmse_rad']:.3f}" if c["joint_rmse_rad"] is not None else "-"
+            re_ = f"{c['root_pos_err_m']:.3f}" if c["root_pos_err_m"] is not None else "-"
+            lines.append(f"  {i:<6}{c['clip'][:42]:<44}{c['falls']:>6}{ff:>12}{jr:>12}{re_:>11}")
+        lines = [x for i, x in enumerate(lines) if x != "" or (i > 0 and lines[i - 1] != "")]
     m = s["metrics_mean_over_robots_without_falls"]
     if m:
         lines += ["", (f"Smoothness and efficiency (mean over {s['robots_without_falls']} robots "

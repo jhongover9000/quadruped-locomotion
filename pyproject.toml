@@ -29,6 +29,9 @@ trajopt = ["pin>=2.7", "casadi>=3.6"]      # reference-gait trajectory optimizat
 sysid = ["cma>=3.3"]                       # black-box parameter fitting
 deploy = ["onnx", "onnxruntime"]
 logging = ["wandb"]
+video = ["imageio[ffmpeg]", "pillow"]      # scripts/record.py, replay.py --video
+# What the SuperMimic reference implementation imports (it is not on PyPI: see docs/supermimic.md).
+supermimic = ["tyro>=1.0", "pandas", "pyarrow", "huggingface-hub", "onnx", "onnxruntime", "pillow"]
 dev = ["pytest", "ruff", "ipykernel", "nbstripout"]
 
 [tool.setuptools.packages.find]

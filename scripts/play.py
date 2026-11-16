@@ -5,10 +5,15 @@
     python scripts/play.py outputs/ppo/flat_velocity/<run>/ --command 1.0 0 0   # every robot forward
     python scripts/play.py outputs/ppo/flat_velocity/<run>/ --task rough_velocity
     python scripts/play.py --robot go1 --task flat_velocity              # no policy: zero actions
+    python scripts/play.py outputs/supermimic/motion_tracking/<run>/     # tracking: holdout clips
+    python scripts/play.py <supermimic run>/ --clips tencent_dog_quad_walk_002_s4
 
 Without --command, each robot follows the task's random velocity commands (new ones every
 resample_interval_s), so some walk backwards or sideways. In the viewer, the blue arrow is
 the command and the cyan arrow the robot's actual velocity.
+
+A tracking run (SuperMimic) plays reference clips instead: one clip per robot, restarted
+when it ends or the robot falls (scripts/motions.py lists clip names).
 
 The zero-action mode is the first check for a new robot: it should load, settle, and
 stand in its default pose under PD control.
@@ -38,6 +43,8 @@ def main() -> None:
     p.add_argument("--command", nargs=3, type=float, metavar=("VX", "VY", "WZ"),
                    help="give every robot this fixed command (m/s, m/s, rad/s)")
     p.add_argument("--num-envs", type=int, default=16)
+    p.add_argument("--clips", nargs="+", help="tracking runs: clip names to play")
+    p.add_argument("--groups", help="tracking runs: manifest groups (default: the task's eval_groups)")
     p.add_argument("--viewer", choices=["auto", "native", "viser"], default="auto")
     p.add_argument("--device", default=None)
     args = p.parse_args()
@@ -46,7 +53,8 @@ def main() -> None:
 
     override = (lambda task: fixed_command_task(task, args.command)) if args.command else None
     run = load_run(args.run_dir, args.checkpoint, robot_name=args.robot, task_name=args.task,
-                   num_envs=args.num_envs, device=args.device, task_override=override)
+                   num_envs=args.num_envs, device=args.device, task_override=override,
+                   clips=args.clips, groups=args.groups)
     if run.checkpoint is not None:
         print(f"Loading {run.checkpoint}")
 

@@ -6,10 +6,17 @@
     python scripts/record.py outputs/ppo/flat_velocity/<run>/ --task rough_velocity   # other terrain
     python scripts/record.py outputs/ppo/flat_velocity/<run>/ --robots 0 3 --gif     # more videos
     python scripts/record.py --robot go1 --scenario stand                             # no policy
+    python scripts/record.py outputs/supermimic/motion_tracking/<run>/        # tracking: holdout clips
+    python scripts/record.py <supermimic run>/ --clips tencent_dog_quad_walk_002_s4 --gif
 
 Scenarios (evaluation/rollout.py): "tour" (stand, forward, backward, sideways, turns, stand),
 "forward" (0.5 -> 1.5 m/s), "stand", or "random" (the task's own command sampling).
 Every robot gets the same command; --robots picks which ones to film.
+
+A tracking run (SuperMimic) has no scenario: each robot plays one reference clip from its
+first frame (--clips / --groups choose them; default the task's eval_groups). The video
+shows the reference as a blue ghost, the plots compare the robot's base velocity with the
+reference's, and the summary adds joint-angle and trunk-position error per clip.
 
 Writes a recording directory (default <run>/recordings/<time>_<scenario>/):
 
@@ -50,7 +57,14 @@ def main() -> None:
     p.add_argument("--scenario", default="tour", choices=sorted(SCENARIOS) + ["random"])
     p.add_argument("--command", nargs=3, type=float, metavar=("VX", "VY", "WZ"),
                    help="one fixed command for the whole rollout (overrides --scenario)")
-    p.add_argument("--duration", type=float, default=20.0, help="s, for --command and random")
+    p.add_argument("--duration", type=float,
+                   help="s, for --command and random (default 20); tracking runs: default is "
+                        "the longest clip, at most 30")
+    p.add_argument("--clips", nargs="+", help="tracking runs: clip names to play")
+    p.add_argument("--groups", help="tracking runs: manifest groups to draw clips from "
+                                    "(default: the task's eval_groups)")
+    p.add_argument("--no-terminations", action="store_true",
+                   help="tracking runs: do not reset when the robot strays from the reference")
     p.add_argument("--num-envs", type=int, default=16)
     p.add_argument("--robots", type=int, nargs="+", default=[0], help="robots to film")
     p.add_argument("--seed", type=int, default=0)
@@ -70,15 +84,23 @@ def main() -> None:
 
     if any(not 0 <= r < args.num_envs for r in args.robots):
         sys.exit(f"--robots must be between 0 and {args.num_envs - 1}")
-    schedule = make_schedule(args.scenario, args.command, args.duration)
-    name = "command" if args.command else args.scenario
 
     t_start = time.perf_counter()
     run = load_run(args.run_dir, args.checkpoint, robot_name=args.robot, task_name=args.task,
-                   num_envs=args.num_envs, device=args.device, seed=args.seed)
-    print(f"Recording {args.num_envs} robots, scenario '{name}'"
-          + (f", checkpoint {run.checkpoint}" if run.checkpoint else ", zero actions"))
-    rollout = record_rollout(run, schedule, args.duration)
+                   num_envs=args.num_envs, device=args.device, seed=args.seed,
+                   clips=args.clips, groups=args.groups, terminations=not args.no_terminations)
+    if run.kind == "tracking":
+        schedule, name, duration = None, "clips", args.duration
+        args.num_envs = run.env.num_envs
+        args.robots = [r for r in args.robots if r < args.num_envs] or [0]
+        print(f"Recording {args.num_envs} reference clips, one per robot, checkpoint {run.checkpoint}")
+    else:
+        duration = 20.0 if args.duration is None else args.duration
+        schedule = make_schedule(args.scenario, args.command, duration)
+        name = "command" if args.command else args.scenario
+        print(f"Recording {args.num_envs} robots, scenario '{name}'"
+              + (f", checkpoint {run.checkpoint}" if run.checkpoint else ", zero actions"))
+    rollout = record_rollout(run, schedule, duration)
 
     model = run.env.sim.mj_model
     import mujoco
@@ -102,7 +124,7 @@ def main() -> None:
         "segments": segments, "dt": float(rollout["dt"]), "num_envs": args.num_envs,
         "seed": args.seed, "root_body": root, "mass": float(model.body_subtreemass[root_id]),
         "joint_names": list(run.robot.joint_names), "foot_names": list(run.robot.foot_sites),
-        "torque_limits": limits, "command": args.command,
+        "torque_limits": limits, "command": args.command, "kind": run.kind,
     }
 
     if args.out:

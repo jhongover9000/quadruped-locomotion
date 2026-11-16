@@ -172,6 +172,26 @@ packages (removing only `libnvidia-compute-*` makes apt pull in another version)
 
 The activation hook from section 3 also prevents this crash on its own.
 
+**A run prints nothing for minutes: slow or hung?** Training reports on its own: after
+5 minutes without progress `train.py` prints `[watchdog] no progress for ... s` and the
+Python stack of every thread to the terminal, then keeps running. Read the last lines of
+the main thread's stack:
+
+- `torch/_inductor/...` or `sympy/...`: PyTorch is compiling. The first SuperMimic start on
+  a machine compiles for 1.5 to 3 minutes; later starts reuse the cache. Occasionally this
+  compilation never returns. If the stack still shows it after 5 minutes, stop the run and
+  start it again (`python scripts/train.py --continue-run <run>/`), or let `--stall-timeout
+  600` do that for you.
+- `warp/...` with "Module ... load": Warp is compiling simulation kernels (first run after
+  an install or upgrade, a few minutes, once).
+- anything else: a real stall. `kill -USR1 <pid>` (the pid is on the `[watchdog]` line
+  printed at start) prints the stacks again to see whether it moved.
+
+**Random hangs in any Python process, even `import torch`.** Check the kernel log:
+`dmesg | grep -E "BUG: Bad|Bad page|Bad rss"`. Lines there mean memory inside the WSL2
+virtual machine was corrupted (seen once with `autoMemoryReclaim=gradual` in
+`.wslconfig`). Run `wsl --shutdown` in PowerShell, remove that setting, and reopen Ubuntu.
+
 ## Laptop tips
 
 - Stay plugged in and use the "Best performance" power mode; laptop GPUs throttle on battery.

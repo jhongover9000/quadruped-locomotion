@@ -1,6 +1,8 @@
 # Measurement protocol for the team's robot
 
-Fill in `configs/robots/<name>.yaml` from these measurements. Formulas are implemented in
+Record the results in `data/sysid/processed/<name>.yaml` and pass that file to
+`scripts/import_robot.py --measurements`, which applies them to the model and the config
+([robot_import.md](robot_import.md), section 2, lists the keys). Formulas are implemented in
 `src/quadruped_rl/sysid/mass_properties.py`.
 
 ## Accuracy targets

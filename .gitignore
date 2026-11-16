@@ -119,3 +119,7 @@ assets/robots/stand_in/*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Cluster: personal overrides of hpc/config.sh; Windows download markers
+hpc/config.local.sh
+*:Zone.Identifier

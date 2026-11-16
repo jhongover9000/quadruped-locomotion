@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<robot name="awkward"><link name="base_link"><inertial><origin xyz="0.01 0.002 0.01"/><mass value="6.0"/><inertia ixx="0.006000000000000002" iyy="0.012000000000000004" izz="0.009000000000000003" ixy="0" ixz="0" iyz="0"/></inertial>
+      <visual><origin xyz="0.02 0 0" rpy="0 0 0.3"/><geometry><mesh filename="package://awkward_description/meshes/trunk.stl"/></geometry></visual>
+      <collision><geometry><box size="0.4 0.16 0.1"/></geometry></collision></link>
+    <link name="imu_link"><inertial><origin xyz="0 0 0"/><mass value="0.05"/><inertia ixx="5.000000000000002e-05" iyy="0.00010000000000000005" izz="7.500000000000003e-05" ixy="0" ixz="0" iyz="0"/></inertial></link>
+    <joint name="imu_fixed" type="fixed"><parent link="base_link"/><child link="imu_link"/><origin xyz="0.05 0 0.03"/></joint>
+    <link name="lf_hip"><inertial><origin xyz="0 0 0"/><mass value="0.5"/><inertia ixx="0.0005000000000000001" iyy="0.0010000000000000002" izz="0.0007500000000000002" ixy="0" ixz="0" iyz="0"/></inertial><collision><origin rpy="0 1.5708 0"/><geometry><cylinder radius="0.03" length="0.05"/></geometry></collision></link>
+    <joint name="lf_haa" type="revolute"><parent link="base_link"/><child link="lf_hip"/>
+      <origin xyz="0.2 0.06 0" rpy="0 0 0"/><axis xyz="1 0 0"/>
+      <limit lower="-0.8" upper="0.8" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="lf_thigh"><inertial><origin xyz="0 0 -0.08"/><mass value="0.8"/><inertia ixx="0.0008000000000000004" iyy="0.0016000000000000007" izz="0.0012000000000000005" ixy="0" ixz="0" iyz="0"/></inertial>
+      <visual><geometry><mesh filename="package://awkward_description/meshes/thigh.dae"/></geometry></visual>
+      <collision><origin xyz="0 0 -0.1"/><geometry><box size="0.03 0.03 0.18"/></geometry></collision></link>
+    <joint name="lf_hfe" type="revolute"><parent link="lf_hip"/><child link="lf_thigh"/>
+      <origin xyz="0.03 0.05 0" rpy="0 0.4 0"/><axis xyz="0 1 0"/><limit lower="-3" upper="3" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="lf_calf"><inertial><origin xyz="0 0 -0.1"/><mass value="0.15"/><inertia ixx="0.00015000000000000001" iyy="0.00030000000000000003" izz="0.00022500000000000002" ixy="0" ixz="0" iyz="0"/></inertial><collision><origin xyz="0 0 -0.1"/><geometry><cylinder radius="0.012" length="0.16"/></geometry></collision></link>
+    <joint name="lf_kfe" type="revolute"><parent link="lf_thigh"/><child link="lf_calf"/>
+      <origin xyz="0 0 -0.2" rpy="0 -0.9 0"/><axis xyz="0 1 0"/><limit lower="-3" upper="3" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="lf_foot"><inertial><origin xyz="0 0 0"/><mass value="0.03"/><inertia ixx="3.0000000000000008e-05" iyy="6.0000000000000015e-05" izz="4.500000000000001e-05" ixy="0" ixz="0" iyz="0"/></inertial><collision><geometry><sphere radius="0.02"/></geometry></collision></link>
+    <joint name="lf_foot_fixed" type="fixed"><parent link="lf_calf"/><child link="lf_foot"/><origin xyz="0 0.01 -0.21"/></joint>
+    <link name="rf_hip"><inertial><origin xyz="0 0 0"/><mass value="0.5"/><inertia ixx="0.0005000000000000001" iyy="0.0010000000000000002" izz="0.0007500000000000002" ixy="0" ixz="0" iyz="0"/></inertial><collision><origin rpy="0 1.5708 0"/><geometry><cylinder radius="0.03" length="0.05"/></geometry></collision></link>
+    <joint name="rf_haa" type="revolute"><parent link="base_link"/><child link="rf_hip"/>
+      <origin xyz="0.2 -0.06 0" rpy="0 0 0"/><axis xyz="-1 0 0"/>
+      <limit lower="-0.8" upper="0.8" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="rf_thigh"><inertial><origin xyz="0 0 -0.08"/><mass value="0.8"/><inertia ixx="0.0008000000000000004" iyy="0.0016000000000000007" izz="0.0012000000000000005" ixy="0" ixz="0" iyz="0"/></inertial>
+      <visual><geometry><mesh filename="package://awkward_description/meshes/thigh.dae"/></geometry></visual>
+      <collision><origin xyz="0 0 -0.1"/><geometry><box size="0.03 0.03 0.18"/></geometry></collision></link>
+    <joint name="rf_hfe" type="revolute"><parent link="rf_hip"/><child link="rf_thigh"/>
+      <origin xyz="0.03 -0.05 0" rpy="0 0.4 0"/><axis xyz="0 -1 0"/><limit lower="-3" upper="3" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="rf_calf"><inertial><origin xyz="0 0 -0.1"/><mass value="0.15"/><inertia ixx="0.00015000000000000001" iyy="0.00030000000000000003" izz="0.00022500000000000002" ixy="0" ixz="0" iyz="0"/></inertial><collision><origin xyz="0 0 -0.1"/><geometry><cylinder radius="0.012" length="0.16"/></geometry></collision></link>
+    <joint name="rf_kfe" type="revolute"><parent link="rf_thigh"/><child link="rf_calf"/>
+      <origin xyz="0 0 -0.2" rpy="0 -0.9 0"/><axis xyz="0 -1 0"/><limit lower="-3" upper="3" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="rf_foot"><inertial><origin xyz="0 0 0"/><mass value="0.03"/><inertia ixx="3.0000000000000008e-05" iyy="6.0000000000000015e-05" izz="4.500000000000001e-05" ixy="0" ixz="0" iyz="0"/></inertial><collision><geometry><sphere radius="0.02"/></geometry></collision></link>
+    <joint name="rf_foot_fixed" type="fixed"><parent link="rf_calf"/><child link="rf_foot"/><origin xyz="0 -0.01 -0.21"/></joint>
+    <link name="lh_hip"><inertial><origin xyz="0 0 0"/><mass value="0.5"/><inertia ixx="0.0005000000000000001" iyy="0.0010000000000000002" izz="0.0007500000000000002" ixy="0" ixz="0" iyz="0"/></inertial><collision><origin rpy="0 1.5708 0"/><geometry><cylinder radius="0.03" length="0.05"/></geometry></collision></link>
+    <joint name="lh_haa" type="revolute"><parent link="base_link"/><child link="lh_hip"/>
+      <origin xyz="-0.2 0.06 0" rpy="0 0 3.141592653589793"/><axis xyz="1 0 0"/>
+      <limit lower="-0.8" upper="0.8" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="lh_thigh"><inertial><origin xyz="0 0 -0.08"/><mass value="0.8"/><inertia ixx="0.0008000000000000004" iyy="0.0016000000000000007" izz="0.0012000000000000005" ixy="0" ixz="0" iyz="0"/></inertial>
+      <visual><geometry><mesh filename="package://awkward_description/meshes/thigh.dae"/></geometry></visual>
+      <collision><origin xyz="0 0 -0.1"/><geometry><box size="0.03 0.03 0.18"/></geometry></collision></link>
+    <joint name="lh_hfe" type="revolute"><parent link="lh_hip"/><child link="lh_thigh"/>
+      <origin xyz="-0.03 -0.05 0" rpy="0 0.4 0"/><axis xyz="0 1 0"/><limit lower="-3" upper="3" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="lh_calf"><inertial><origin xyz="0 0 -0.1"/><mass value="0.15"/><inertia ixx="0.00015000000000000001" iyy="0.00030000000000000003" izz="0.00022500000000000002" ixy="0" ixz="0" iyz="0"/></inertial><collision><origin xyz="0 0 -0.1"/><geometry><cylinder radius="0.012" length="0.16"/></geometry></collision></link>
+    <joint name="lh_kfe" type="revolute"><parent link="lh_thigh"/><child link="lh_calf"/>
+      <origin xyz="0 0 -0.2" rpy="0 -0.9 0"/><axis xyz="0 1 0"/><limit lower="-3" upper="3" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="lh_foot"><inertial><origin xyz="0 0 0"/><mass value="0.03"/><inertia ixx="3.0000000000000008e-05" iyy="6.0000000000000015e-05" izz="4.500000000000001e-05" ixy="0" ixz="0" iyz="0"/></inertial><collision><geometry><sphere radius="0.02"/></geometry></collision></link>
+    <joint name="lh_foot_fixed" type="fixed"><parent link="lh_calf"/><child link="lh_foot"/><origin xyz="0 -0.01 -0.21"/></joint>
+    <link name="rh_hip"><inertial><origin xyz="0 0 0"/><mass value="0.5"/><inertia ixx="0.0005000000000000001" iyy="0.0010000000000000002" izz="0.0007500000000000002" ixy="0" ixz="0" iyz="0"/></inertial><collision><origin rpy="0 1.5708 0"/><geometry><cylinder radius="0.03" length="0.05"/></geometry></collision></link>
+    <joint name="rh_haa" type="revolute"><parent link="base_link"/><child link="rh_hip"/>
+      <origin xyz="-0.2 -0.06 0" rpy="0 0 3.141592653589793"/><axis xyz="-1 0 0"/>
+      <limit lower="-0.8" upper="0.8" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="rh_thigh"><inertial><origin xyz="0 0 -0.08"/><mass value="0.8"/><inertia ixx="0.0008000000000000004" iyy="0.0016000000000000007" izz="0.0012000000000000005" ixy="0" ixz="0" iyz="0"/></inertial>
+      <visual><geometry><mesh filename="package://awkward_description/meshes/thigh.dae"/></geometry></visual>
+      <collision><origin xyz="0 0 -0.1"/><geometry><box size="0.03 0.03 0.18"/></geometry></collision></link>
+    <joint name="rh_hfe" type="revolute"><parent link="rh_hip"/><child link="rh_thigh"/>
+      <origin xyz="-0.03 0.05 0" rpy="0 0.4 0"/><axis xyz="0 -1 0"/><limit lower="-3" upper="3" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="rh_calf"><inertial><origin xyz="0 0 -0.1"/><mass value="0.15"/><inertia ixx="0.00015000000000000001" iyy="0.00030000000000000003" izz="0.00022500000000000002" ixy="0" ixz="0" iyz="0"/></inertial><collision><origin xyz="0 0 -0.1"/><geometry><cylinder radius="0.012" length="0.16"/></geometry></collision></link>
+    <joint name="rh_kfe" type="revolute"><parent link="rh_thigh"/><child link="rh_calf"/>
+      <origin xyz="0 0 -0.2" rpy="0 -0.9 0"/><axis xyz="0 -1 0"/><limit lower="-3" upper="3" effort="25" velocity="20"/><dynamics damping="0.02" friction="0.1"/></joint>
+    <link name="rh_foot"><inertial><origin xyz="0 0 0"/><mass value="0.03"/><inertia ixx="3.0000000000000008e-05" iyy="6.0000000000000015e-05" izz="4.500000000000001e-05" ixy="0" ixz="0" iyz="0"/></inertial><collision><geometry><sphere radius="0.02"/></geometry></collision></link>
+    <joint name="rh_foot_fixed" type="fixed"><parent link="rh_calf"/><child link="rh_foot"/><origin xyz="0 0.01 -0.21"/></joint>
+</robot>

@@ -1,20 +1,54 @@
-# SuperMimic-style: learned differentiable world model + BPTT over short imagined rollouts.
-# PLACEHOLDER values -- set from the paper (arXiv 2610.28480) and the reference
-# reimplementation before running. Adapting it from humanoids to a quadruped is part of the work.
+# SuperMimic (arXiv 2610.28480): learned differentiable world model + policy improvement by
+# BPTT through short imagined rollouts, on a motion-tracking task.
+# Runs the reference implementation (algorithms/supermimic/backend.py finds it); the
+# sections below set fields of its TrainConfig by name, so anything there can be tuned here.
 name: supermimic
 default_task: motion_tracking
+
+# One iteration = one control step in every environment (not a 24-step rollout as in PPO).
+# Reference run: 20480 envs x 50000 iterations (~72 GiB GPU). 1024 envs use ~4 GiB.
 num_envs: 4096
-max_iterations: 3000
+max_iterations: 50000
+save_interval: 2000           # iterations between numbered checkpoints
+max_hours: null               # stop cleanly after this long (cluster time limits); resume later
+
+backend:
+  root: null                  # reference repository; null: $SUPERMIMIC_ROOT, then ../supermimic-quadruped
+  robot_specs:                # our robot name -> RobotSpec name in the reference repository
+    go1: go1
+    testdog: testdog
+
+env:
+  action_noise_std: 0.1       # exploration noise on actions during collection
+  obs_noise: true
+  reset_noise: true
+  domain_randomization: true
+  replay_capacity: 1000       # steps kept per environment
+  anchor_obs: false
+  stiffness: null             # PD kp override, N*m/rad (null: the robot spec's)
+  action_scale: null
+
 world_model:
   hidden: [2048, 2048, 2048]
-  learning_rate: 3.0e-4
-  updates_per_iteration: 8
-  replay_buffer_size: 2000000
+wm_trainer:
+  lr: 2.0e-4
+  window: 8                   # multi-step prediction loss horizon
+  batch_size: null            # null: num_envs / 2
+  batches_per_update: 10
 policy:
-  hidden: [512, 256, 128]
-  learning_rate: 3.0e-4
-imagination:
-  horizon: 16                 # TODO: tune
-  terminal_critic: true
+  encoder_hidden: [2048, 1024, 512, 256]
+  decoder_hidden: [2048, 1024, 512, 256]
+critic:
+  hidden: [256, 128]
+policy_trainer:
+  lr: 2.0e-4
+  critic_lr: 2.0e-4
+  horizon: 32                 # imagined rollout length, control steps
   gamma: 0.99
-save_interval: 200
+  batch_size: null            # null: num_envs
+schedule:
+  updates_per_env_step: 0.4   # world-model + policy updates per iteration
+  warmup_iterations: 40
+  lr_final_ratio: 0.03        # cosine decay to this fraction of the learning rate
+  lr_decay_fraction: 1.0
+  log_interval: 50

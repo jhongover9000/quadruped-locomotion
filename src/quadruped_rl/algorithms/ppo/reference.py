@@ -55,18 +55,25 @@ class RslRlPPOAgent(Agent):
 
     def train(self, num_envs: int | None = None, max_iterations: int | None = None,
               resume: Path | None = None) -> None:
-        from quadruped_rl.envs.builder import make_env
-
-        env = make_env(self.robot, self.task_cfg, num_envs or self.algo_cfg["num_envs"],
-                       self.device, seed=self.seed)
+        if self.algo_cfg.get("max_hours") is not None:
+            print("[ppo_rslrl] max_hours is not supported by the rsl_rl runner and is ignored; "
+                  "an interrupted run continues from its last checkpoint with --continue-run.")
+        env = self.make_env(num_envs or self.algo_cfg["num_envs"])
         wrapped, runner = self._runner(env, str(self.run_dir))
         if resume is not None:
+            self._check(resume)
             runner.load(str(resume))
         runner.learn(num_learning_iterations=max_iterations or int(self.algo_cfg["max_iterations"]),
                      init_at_random_ep_len=True)
         wrapped.close()
 
+    def _check(self, checkpoint: Path) -> None:
+        from quadruped_rl.algorithms.checkpoints import load_checkpoint, require_format
+
+        require_format(load_checkpoint(checkpoint), "ppo_rslrl", Path(checkpoint))
+
     def make_policy(self, env, checkpoint: Path):
+        self._check(checkpoint)
         wrapped, runner = self._runner(env, None)
         runner.load(str(checkpoint), load_cfg={"actor": True}, strict=True, map_location=self.device)
         return wrapped, runner.get_inference_policy(device=self.device)

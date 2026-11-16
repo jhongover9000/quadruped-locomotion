@@ -1,9 +1,10 @@
-# Template for the team's robot. Copy to configs/robots/<name>.yaml and fill in.
-# Files starting with "_" are skipped by tests and cannot be loaded by mistake.
-# See docs/measurement_protocol.md for how to get each number, and go1.yaml for a
-# complete example.
+# Robot config, field by field. You normally do not write this by hand:
+#   python scripts/import_robot.py robot.urdf --name <name>
+# produces it from the URDF and measurements (docs/robot_import.md). Use this template
+# only for a model that is already an MJCF in this project's layout; go1.yaml is a
+# complete example. Files starting with "_" are skipped by tests and cannot be loaded.
 name: TODO
-model_path: assets/robots/custom/mjcf/TODO.xml   # from scripts/convert_urdf_to_mjcf.py
+model_path: assets/robots/TODO/mjcf/TODO.xml
 
 base_body: TODO
 foot_geoms: [TODO_FR, TODO_FL, TODO_RR, TODO_RL]  # foot collision geoms, FR, FL, RR, RL

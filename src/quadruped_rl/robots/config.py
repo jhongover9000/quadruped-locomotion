@@ -44,6 +44,9 @@ class RobotConfig:
     mass_nominal: float
     actuator: ActuatorSpec
     domain_randomization: dict = field(default_factory=dict)
+    # Imported robots: how joint angles map to the URDF's, q_urdf = offset + sign * q_sim
+    # (scripts/import_robot.py); empty when the model already is the hardware convention.
+    hardware: dict = field(default_factory=dict)
 
     @property
     def num_joints(self) -> int:
@@ -80,6 +83,9 @@ class RobotConfig:
         for key in ("foot_geoms", "foot_sites"):
             if len(getattr(self, key)) != len(LEGS):
                 raise ValueError(f"{self.name}: need {len(LEGS)} {key}, got {len(getattr(self, key))}")
+        for key in ("urdf_joint_names", "sign", "offset"):
+            if self.hardware and len(self.hardware.get(key, [])) != n:
+                raise ValueError(f"{self.name}: hardware.{key} needs {n} entries")
         if min(self.actuator.kp) <= 0:
             raise ValueError(f"{self.name}: every actuator.kp must be positive")
 
@@ -132,6 +138,7 @@ def robot_from_dict(raw: dict) -> RobotConfig:
             params=act.get("params") or {},
         ),
         domain_randomization=raw.get("domain_randomization") or {},
+        hardware=raw.get("hardware") or {},
     )
     cfg.validate()
     return cfg

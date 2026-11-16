@@ -3,8 +3,9 @@ reward, r = w_task r_task + w_style r_style. Trains the discriminator alongside 
 
 TODO(phase 4)."""
 
-from quadruped_rl.algorithms.ppo.agent import PPOAgent
+from quadruped_rl.algorithms.base import NotImplementedAgent
 
 
-class AMPAgent(PPOAgent):
-    pass
+class AMPAgent(NotImplementedAgent):
+    task_kinds = ("velocity",)
+    phase = "phase 4"
