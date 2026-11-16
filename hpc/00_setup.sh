@@ -12,7 +12,7 @@
 HPC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HPC_DIR/lib.sh"
-
+echo "Root:       $SCRATCH_ROOT"
 echo "Project:    $PROJECT_DIR"
 echo "SuperMimic: $SUPERMIMIC_ROOT"
 echo "Outputs:    $QUADRUPED_OUTPUT_DIR"
