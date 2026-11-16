@@ -55,7 +55,7 @@ Training runs on an NVIDIA GPU under Linux; on Windows, use WSL2 + Ubuntu.
 **Full walkthrough: [docs/setup_wsl2.md](docs/setup_wsl2.md).** In short:
 
 ```bash
-conda create -n mujoco python=3.12 -y && conda activate mujoco
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[mjlab,dev]"                    # PyTorch (CUDA), MuJoCo Warp, mjlab
 git lfs install                                  # once per machine
 pytest                                           # fast checks, incl. PPO on a toy task
@@ -74,10 +74,7 @@ python scripts/train.py --algo ppo_rslrl                 # reference PPO (rsl_rl
 python scripts/benchmark.py                              # steps/s, GPU memory, run/sweep times
 tensorboard --logdir outputs                             # learning curves
 python scripts/play.py outputs/ppo/flat_velocity/<run>/  # watch the policy
-python scripts/play.py <run>/ --command 1.0 0 0          # every robot walks forward
 python scripts/play.py --robot go1                       # no policy: does the robot stand?
-python scripts/record.py <run>/                          # video, plots, summary of a command tour
-python scripts/replay.py <run>/recordings/<recording>/   # rewatch offline: no GPU, no policy
 ```
 
 `ppo_rslrl` runs rsl_rl's PPO (the trainer mjlab itself uses) on exactly our environment.
