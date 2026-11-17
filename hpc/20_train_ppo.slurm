@@ -36,7 +36,7 @@ train_one() {
   [[ "$task" == rough* ]] && iterations="$PPO_ITERATIONS_ROUGH"
   local run_dir="$QUADRUPED_OUTPUT_DIR/$algo/$task/${PIPELINE_ID}_${ROBOT}_s${seed}"
   echo "==== $algo on $task, seed $seed: $iterations iterations x $PPO_NUM_ENVS envs ===="
-  echo "$run_dir" >> "$STATE_DIR/runs.txt"
+  grep -qxF "$run_dir" "$STATE_DIR/runs.txt" 2>/dev/null || echo "$run_dir" >> "$STATE_DIR/runs.txt"
   train_run "$run_dir" --algo "$algo" --task "$task" --robot "$ROBOT" --seed "$seed" \
     --num-envs "$PPO_NUM_ENVS" --max-iterations "$iterations"
 }

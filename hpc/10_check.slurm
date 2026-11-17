@@ -10,8 +10,10 @@
 #
 # Stage 1: is this node able to run the pipeline? Fails fast, before the long jobs start:
 # GPU visible to PyTorch and Warp, the repository's tests pass, both PPO trainers train
-# for a few iterations, offscreen rendering works, and the SuperMimic reference
-# repository is where config.sh says.
+# for a few iterations, the MPC baseline builds, AMP and DeepMimic train for a few
+# iterations (only when the motion library exists; on a fresh cluster stage motions
+# builds it later), offscreen rendering works, and the SuperMimic reference repository is
+# where config.sh says.
 
 # Find hpc/ (Slurm runs a copy of this file from its spool directory).
 for d in "${HPC_DIR:-}" "${SLURM_SUBMIT_DIR:-}/hpc" "${SLURM_SUBMIT_DIR:-}" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; do
@@ -61,7 +63,17 @@ for algo in ppo ppo_rslrl; do
   python scripts/train.py --algo "$algo" --num-envs 64 --max-iterations 3 --run-dir "$CHECK_DIR/$algo"
 done
 
-echo "==== [6] Offscreen rendering (MUJOCO_GL=${MUJOCO_GL:-default}) ===="
+echo "==== [6] MPC baseline, AMP and DeepMimic ===="
+python scripts/train.py --algo mpc --robot "$ROBOT" --run-dir "$CHECK_DIR/mpc"
+if [[ -f "$SUPERMIMIC_ROOT/data/npz/$ROBOT/manifest.csv" ]]; then
+  python scripts/train.py --algo amp --robot "$ROBOT" --num-envs 64 --max-iterations 3 --run-dir "$CHECK_DIR/amp"
+  python scripts/train.py --algo deepmimic --robot "$ROBOT" --num-envs 256 --max-iterations 3 \
+    --run-dir "$CHECK_DIR/deepmimic"
+else
+  echo "AMP and DeepMimic skipped: no motion library yet ($SUPERMIMIC_ROOT/data/npz/$ROBOT/manifest.csv); stage motions builds it."
+fi
+
+echo "==== [7] Offscreen rendering (MUJOCO_GL=${MUJOCO_GL:-default}) ===="
 python scripts/record.py "$CHECK_DIR/ppo" --command 0.5 0 0 --duration 2 --num-envs 4 \
   --width 640 --height 360 --out "$CHECK_DIR/recording"
 test -s "$CHECK_DIR/recording/video.mp4"

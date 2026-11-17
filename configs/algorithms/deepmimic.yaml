@@ -1,5 +1,31 @@
-# DeepMimic = PPO optimizing the imitation reward in tasks/motion_tracking.yaml.
+# DeepMimic = our PPO on the imitation reward of tasks/motion_tracking.yaml, with
+# reference-state initialization and early termination: the model-free counterpart of
+# SuperMimic. It trains in the SuperMimic backend's tracking environment, built from the
+# task YAML by the same code (algorithms/supermimic/tracking.py), so the clips, tracking
+# reward, terminations and reset sampling are SuperMimic's. Needs the reference repository
+# (docs/supermimic.md).
 inherit: algorithms/ppo.yaml
 name: deepmimic
 default_task: motion_tracking
-gamma: 0.95
+gamma: 0.95                   # DeepMimic paper; the reward is dense, the horizon short
+# Same simulated-step budget as supermimic.yaml (4096 envs x 50000 steps ~ 4096 x 24 x 2000).
+# Not yet tuned against a learning curve.
+max_iterations: 2000
+
+# The two sections below must match configs/algorithms/supermimic.yaml (backend: entire,
+# env: everything SuperMimic sets except its exploration noise) so both methods train in the
+# same environment; tests/test_deepmimic.py checks it.
+backend:
+  root: null                  # reference repository; null: $SUPERMIMIC_ROOT, then ../supermimic-quadruped
+  robot_specs:                # our robot name -> RobotSpec name in the reference repository
+    go1: go1
+    testdog: testdog
+
+env:
+  action_noise_std: 0.0       # PPO explores through its Gaussian policy, not the environment
+  obs_noise: true
+  reset_noise: true
+  domain_randomization: true
+  anchor_obs: false
+  stiffness: null             # PD kp override, N*m/rad (null: the robot spec's)
+  action_scale: null

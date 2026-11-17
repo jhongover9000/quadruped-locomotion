@@ -103,3 +103,44 @@ table (P5.4); committing.
 
 Record here anything you had to do differently from this spec and why. If you hit a
 choice the spec does not cover, take the conservative option, note it here and continue.
+
+### P5.3 implementation notes (2026-11-16, worktree agent-a2fa4d9835e8da89e)
+
+- **Checkpoint for `load_run`:** `train()` writes `checkpoints/model_0.pt`, which holds the
+  controller settings, the leg kinematics and the rigid-body parameters read from the
+  MuJoCo model (signature `mpc` in `checkpoints._SIGNATURES`). `make_policy` rebuilds the
+  controller from that file, so play/record/evaluate need no special flags. `train.py`
+  is unchanged: with no `max_iterations` the target is 0 and `status.json` says finished.
+  The run also prints a harmless "could not plot training curves" line (no TensorBoard
+  events).
+- **Torque limits:** enforced by clipping, not in the QP. Stance torques are clipped to
+  `actuator.torque_limit`, then the position target is clipped so the PD torque at the
+  start of the control step stays inside the limit. The QP only bounds each normal force
+  (`max_foot_force_bw`).
+- **Config changes beyond the original YAML:** `friction_coef` 0.6 -> 0.3 (the lowest foot
+  friction in the Go1 domain randomization; with 0.6, low-friction robots slipped and fell:
+  15 falls at 0.5 m/s with 16 envs, against 1 with 0.3). Position weights on x, y 0 -> 5,
+  plus a target pose (commanded velocity and yaw rate integrated from where the robot
+  was, capped at `max_position_error` 0.1 m / `max_yaw_error` 0.2 rad). Without position
+  feedback, the randomized added mass and CoM offset made standing robots creep about
+  1.5 cm/s relative to their feet until they fell (6/16 fell within 10 s).
+- **The stance PD target leads by half a control step** (`q_des = q + 0.5 dt qd`) so the
+  torque averaged over the 4 physics steps is close to the wanted torque. Measured drift:
+  the RMS change in PD torque over one control step is 2.6-4.7 N m, against an RMS torque
+  of 5.5-8 N m while trotting (0 when standing). It is large; the lead term only
+  compensates its mean.
+- **Measured targets so far** (CPU, `CUDA_VISIBLE_DEVICES=""`, flat_velocity, Go1, 16 envs,
+  play-mode domain randomization on, 10 s; error = |mean velocity after 2 s - command|):
+  stand 0 falls, 0.000 m/s; 0.5 m/s 1 fall, 0.012; 1.0 m/s 3 falls, 0.052; 0.3 m/s
+  sideways 2 falls, 0.013; 0.5 rad/s yaw 0 falls, 0.009 rad/s. The velocity targets are
+  met. The no-falls target is missed by 1-3 falls per 10 s at speed, all on the
+  robots with the lowest friction (0.33 at seed 0) combined with the other randomization
+  terms. With randomization off, 0.5 m/s gives 0 falls. Control loop for 16 envs on the
+  CPU: about 20 ms per step (4 torch threads; it rises to 90 ms with 16 threads
+  oversubscribed next to the CPU simulator). Still to measure: the GPU numbers.
+- **`evaluate.py` on the CPU** (`--seeds 1 --num-envs 16`, default command set, 8 s each),
+  MPC against the PPO run `20261114_220614_go1_s0` (copied into the worktree's outputs so
+  nothing is written into the main checkout): MPC 49 falls, rmse xy 0.207, wz 0.409; PPO 1
+  fall, 0.112 / 0.084. MPC per command: 0.5 m/s 1 fall, 1.0 m/s 0, 1.5 m/s 43 (beyond the
+  spec's targets; the 0.5 s trot with 0.15 m foothold cap cannot keep up), 1.0 rad/s yaw 5,
+  combined 0.5/0.3/0.5 0.

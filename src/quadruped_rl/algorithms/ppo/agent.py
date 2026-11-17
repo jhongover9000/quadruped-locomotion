@@ -16,6 +16,11 @@ Each iteration:
 
 Asymmetric actor-critic: the actor reads the "actor" observations, the critic the
 privileged "critic" observations.
+
+Subclasses extend the loop through the hooks under "extension points": they change the
+reward after each step, add their own optimizer steps to the update, add scalars to the
+log and add state to the checkpoint. AMP uses all of them; DeepMimic only the checkpoint
+hooks. The hooks do nothing here.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ CSV_COLUMNS = ["iteration", "env_steps", "mean_return", "mean_episode_length", "
 
 class PPOAgent(Agent):
     model: ActorCritic | None = None
+    checkpoint_kind = "ppo"         # the format name in algorithms/checkpoints.py
 
     # ---- setup ----------------------------------------------------------------------
 
@@ -90,6 +96,7 @@ class PPOAgent(Agent):
         save_interval = int(c.get("save_interval", 100))
         end = self.iteration + max_iterations
         max_hours, t_begin = c.get("max_hours"), time.perf_counter()
+        self._on_learn_start(env)
 
         while self.iteration < end:
             t_start = time.perf_counter()
@@ -117,6 +124,9 @@ class PPOAgent(Agent):
                         env_log[key].append(value.float().mean().item()
                                             if torch.is_tensor(value) else float(value))
 
+                    # The return above is the environment's; learning uses the hook's reward.
+                    rewards = self._process_rewards(env, rewards, terminated.to(self.device),
+                                                    truncated.to(self.device))
                     # Time-outs aren't failures: bootstrap with the critic's estimate.
                     rewards = rewards + gamma * values * truncated.to(self.device).float()
                     storage.add(actor_obs, critic_obs, actions, log_probs, values, rewards,
@@ -129,6 +139,7 @@ class PPOAgent(Agent):
             # 2. Advantages, 3. Update
             storage.compute_returns(last_values, gamma, lam)
             losses = self._update(storage)
+            extra_scalars = self._extra_update(storage)
             # Refresh the normalizers only now, so the update above saw exactly the
             # normalization the rollout used (otherwise the KL check reads drift as a step).
             model.update_normalization(storage.actor_obs.flatten(0, 1), storage.critic_obs.flatten(0, 1))
@@ -153,6 +164,8 @@ class PPOAgent(Agent):
                 scalars["Train/mean_episode_length"] = torch.cat(finished_lengths).mean().item()
             for key, values in env_log.items():
                 scalars[key] = sum(values) / len(values)
+            scalars.update(extra_scalars)
+            scalars.update(self._extra_scalars())
             logger.log(self.iteration, scalars)
             self._print(scalars, end)
 
@@ -231,6 +244,32 @@ class PPOAgent(Agent):
             n += 1
         return {k: v / n for k, v in totals.items()}
 
+    # ---- extension points (no-ops for plain PPO) -------------------------------------
+
+    def _on_learn_start(self, env) -> None:
+        """Called once in learn(), right before the first rollout."""
+
+    def _process_rewards(self, env, rewards: torch.Tensor, terminated: torch.Tensor,
+                         truncated: torch.Tensor) -> torch.Tensor:
+        """The reward PPO learns from, given the environment's reward [N] after each step.
+        Environments that are done have already been reset in ``env``."""
+        return rewards
+
+    def _extra_update(self, storage: RolloutStorage) -> dict[str, float]:
+        """Further optimizer steps after the PPO update; returns scalars to log by tag."""
+        return {}
+
+    def _extra_scalars(self) -> dict[str, float]:
+        """More scalars for this iteration's log (TensorBoard tags)."""
+        return {}
+
+    def _extra_state(self) -> dict:
+        """More entries for the checkpoint dict."""
+        return {}
+
+    def _load_extra_state(self, ckpt: dict) -> None:
+        """Restore what _extra_state() saved (full loads only, not actor_only)."""
+
     def _print(self, s: dict, end: int) -> None:
         ret = s.get("Train/mean_return", float("nan"))
         length = s.get("Train/mean_episode_length", float("nan"))
@@ -257,7 +296,8 @@ class PPOAgent(Agent):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save({"model": self.model.state_dict(), "optimizer": self.optimizer.state_dict(),
-                    "iteration": self.iteration, "learning_rate": self.learning_rate}, path)
+                    "iteration": self.iteration, "learning_rate": self.learning_rate,
+                    **self._extra_state()}, path)
 
     def load(self, path: Path, actor_only: bool = False) -> None:
         """Restore a checkpoint. ``actor_only`` loads just what inference needs (actor,
@@ -265,7 +305,7 @@ class PPOAgent(Agent):
         from quadruped_rl.algorithms.checkpoints import load_checkpoint, require_format
 
         ckpt = load_checkpoint(path, self.device)
-        require_format(ckpt, "ppo", Path(path))
+        require_format(ckpt, self.checkpoint_kind, Path(path))
         state = ckpt["model"]
         saved_dim = state["actor_norm.mean"].shape[0]
         if saved_dim != self.model.actor_norm.mean.shape[0]:
@@ -282,3 +322,4 @@ class PPOAgent(Agent):
             return
         self.model.load_state_dict(state)
         self.optimizer.load_state_dict(ckpt["optimizer"])
+        self._load_extra_state(ckpt)

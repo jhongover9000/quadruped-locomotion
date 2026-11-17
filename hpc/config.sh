@@ -31,6 +31,19 @@ PPO_NUM_ENVS="${PPO_NUM_ENVS:-4096}"
 PPO_ITERATIONS_FLAT="${PPO_ITERATIONS_FLAT:-1500}"
 PPO_ITERATIONS_ROUGH="${PPO_ITERATIONS_ROUGH:-3000}"
 
+# DeepMimic and AMP (stage mimic): an array over MIMIC_RUNS (algo:task pairs) x SEEDS.
+# Both use the motion library of stage motions. Each run gets one job of at most
+# MIMIC_MAX_HOURS inside the MIMIC_TIME limit; one that does not finish keeps its latest
+# checkpoint (resubmit with --only mimic --id <id> to continue it). The time defaults
+# mirror one SuperMimic segment and are provisional until the A100 speed is measured.
+MIMIC_RUNS="${MIMIC_RUNS:-deepmimic:motion_tracking amp:flat_velocity}"
+DM_NUM_ENVS="${DM_NUM_ENVS:-4096}"
+DM_ITERATIONS="${DM_ITERATIONS:-2000}"        # = max_iterations in configs/algorithms/deepmimic.yaml
+AMP_NUM_ENVS="${AMP_NUM_ENVS:-4096}"
+AMP_ITERATIONS="${AMP_ITERATIONS:-1500}"      # = max_iterations in configs/algorithms/ppo.yaml
+MIMIC_MAX_HOURS="${MIMIC_MAX_HOURS:-19}"      # training stops cleanly before MIMIC_TIME
+MIMIC_TIME="${MIMIC_TIME:-20:00:00}"          # Slurm time limit of each mimic job
+
 # SuperMimic. One iteration = one control step in every environment.
 # GPU memory grows with SM_NUM_ENVS: about 4 GiB at 1024 (measured), 72 GiB at 20480
 # (reference run). 8192 leaves headroom on a 40 GB A100; an 80 GB A100 fits 20480.
@@ -55,5 +68,7 @@ RECORD_DURATION="${RECORD_DURATION:-}"        # seconds of video per run (empty:
 if [[ "${SMOKE:-0}" == "1" ]]; then
   SEEDS="0"; PPO_NUM_ENVS=64; PPO_ITERATIONS_FLAT=3; PPO_ITERATIONS_ROUGH=3
   SM_NUM_ENVS=256; SM_ITERATIONS=120; SM_SEGMENTS=2; SM_SEGMENT_HOURS=1
+  DM_NUM_ENVS=256; DM_ITERATIONS=3; AMP_NUM_ENVS=64; AMP_ITERATIONS=3
+  MIMIC_MAX_HOURS=1; MIMIC_TIME=01:00:00
   EVAL_SEEDS=1; RECORD_ROBOTS="0"; RECORD_DURATION=4
 fi

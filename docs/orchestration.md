@@ -40,6 +40,8 @@ Answered by Joseph on 2026-11-16:
 3. The team robot's URDF, gains and measurements are coming; no date. Phase 2 waits.
 4. DeepMimic, AMP and MPC are in scope and should be implemented (phase 5).
 5. `prompting_guide/` is ignored by git.
+7. Hardware for phase 4 (answered 11-16, late evening): the policy runs on a Raspberry
+   Pi 4 and the motor controllers are moteus r4.11. What follows from that is under P4.1.
 
 Still open:
 
@@ -47,10 +49,51 @@ Still open:
    SuperMimic Go1 spec uses 0; training only warns. Fixing it means recalibrating and
    retraining. Working assumption: leave it, since the Go1 is a stand-in, and make sure
    the team robot's two files agree (P2.4).
-7. **Hardware interface for phase 4:** which motor controllers and which onboard computer
-   the policy will run on.
+8. **Rest of the hardware interface for phase 4:** how the Pi reaches the controllers
+   (mjbots pi3hat, fdcanusb, or another CAN-FD adapter), which IMU and where it is
+   mounted, the motors and gear ratios, and the battery voltage. Not needed before P4.1.
 
 ## Work in flight
+
+### Session `ac9d5b2f`, from 2026-11-16 22:56 EST
+
+Joseph restarted WSL at about 22:55. At 22:56 (uptime 1 minute): `nvidia-smi` reports the
+RTX 4080 with 0 MiB used, `ls /usr/lib/wsl/drivers` works, and
+`dmesg | grep -ciE "bad page|bad rss|EXT4-fs error"` gives 0. The `dxgk ... Ioctl failed: -22`
+lines appear at every `nvidia-smi` call on a healthy GPU too, so they are not a signal by
+themselves.
+
+| Work | Agent | State |
+|---|---|---|
+| Step 1 of "Next after the restart" | runner | Done on the landed tree, each on its second try (`outputs/debug/p5/step1_*.log`): `train.py --list` shows all six as implemented (22:58; the first try aborted at import with `c10::Error ... aten::_fused_adam.out`); `pytest -q` "108 passed, 7 deselected, 1 warning in 23.71s" (23:23; the first try hung 25 minutes with no output); `pytest -q -m sim` "7 passed, 108 deselected, 5 warnings in 19.91s" (23:54; the first try hung 30 minutes). These tests do not exercise the GPU kernels, and the last one passed with the GPU already gone. |
+| Step 2, `smoke_p5` pipeline | runner | **Blocked, nothing validated.** The GPU passthrough was found dead at 23:54 (`nvidia-smi` cannot reach the driver, `ls /usr/lib/wsl/drivers` gives an input/output error, the bad-page grep still 0). It was alive at about 23:23. The pipeline was launched by accident in the same command as the failed check and was stopped by the main session at 23:56 inside its first `check` attempt; `outputs/pipelines/smoke_p5/` is empty. Needs `wsl --shutdown` from Windows (Joseph). |
+| `run_stages.sh` stops on a lost GPU | main session | Done 23:57. Before this, a lost GPU meant "no hang verdict", so each attempt would have run to the hard limit (7200 s here, five attempts a stage). Now the driver mount is checked before each attempt and at every poll, and the run stops with exit code 3 and the time of the loss. Checked with the GPU down: `STAGE_CMD='echo ran $STAGE' STAGES="check ppo" scripts/dev/run_stages.sh <dir>` prints "GPU LOST before stage check attempt 1; not starting it" and exits 3. Not yet run with a working GPU, and the loss-during-an-attempt branch has not been exercised. |
+| Review of the uncommitted phase 5 diff (working tree against `4c39b41`) before the commit | adversarial-reviewer | Done. Claude only (no Codex or Gemini CLI), by reading, nothing run. No serious defect: AMP losses, reset handling and feature frames, the checkpoint hook, the MPC dynamics, QP and torque mapping, and the Slurm dependencies all read as correct. Four low-severity notes, none blocking the commit; they are in the Backlog. Not covered: the three new test files, `evaluate.py`'s handling of the new algorithm names, `hpc/00_setup.sh`. |
+
+Joseph will run the GPU steps himself (decided 11-17). The runbook is
+`docs/gpu_validation.md`: health check, driver self-test, smoke pipeline, the two
+learning runs, optional recordings, and which files count as evidence. The landed tree
+was committed on branch `phase5-landed` (not pushed, not merged into `main`) as
+"CPU-tested, GPU validation pending". When the evidence exists: tick P0.4, P0.5, P0.10,
+P5.1 to P5.4 from it, do P0.7, merge the branch, remove the worktrees.
+
+Then, after the next restart: step 2 again, step 3 (the two learning runs), step 4
+(`visual-check` on the `smoke_p5` report), step 5 (P0.7 README, P0.12 commit). Step 1 need
+not be repeated. For step 2, first confirm the driver with a working GPU:
+`STAGE_CMD='echo ran $STAGE' STAGES="check ppo" PIPELINE_ID=driver_test scripts/dev/run_stages.sh <scratch dir>`
+should print `ALL STAGES PASSED`.
+
+Third GPU loss of the day, and what it adds (P0.13): this time nothing was force-killed
+with `kill -9` and no process had used the GPU. Between the last good `nvidia-smi` (about
+23:23) and the failed one (23:54) the only activity was one `pytest -q -m sim` process
+hung in import for 30 minutes at 100% CPU, ended by `timeout` with SIGTERM at 23:54. So
+the loss does not need a forced kill of a GPU-bound process; whether it happens during a
+long hang or at the moment the hung process is ended is still unknown. To find out, do
+not wait out hangs: brief runners to use short timeouts on quick commands (120 s for
+`train.py --list` and for either pytest set, which take 20 to 30 s when healthy) and to
+check `ls /usr/lib/wsl/drivers` before and after each one, logging the time.
+
+### Earlier sessions
 
 Started 2026-11-16 20:45 EST by session `2b7b9bd3`, one minute after another WSL restart
 (nothing from `22c07b4a` survived it; its agents left uncommitted work in two worktrees).
@@ -62,9 +105,46 @@ uncommitted changes, and given their GPU acceptance checks.
 | Work | Agent | State at 20:45 |
 |---|---|---|
 | P0.1b Warp check, then tests, P0.2 stall test, P0.4 evaluation stage, P0.5 whole pipeline (`smoke_local3`), P0.8 `play.py` | runner | Running. Stops and diagnoses at the first step that needs a code or environment change. Logs in `outputs/debug/p0/`. |
-| P5.3 MPC baseline | implementer | Running. Continues the half-done work in `.claude/worktrees/agent-a2fa4d9835e8da89e`. |
-| P5.2 AMP | implementer | Running. Continues the half-done work in `.claude/worktrees/agent-aa519201bbcd5026d`. |
-| P5.1 DeepMimic | implementer | Running. Fresh worktree under `.claude/worktrees/`; nothing existed before. |
+| P5.3 MPC baseline | implementer | Code done and diff reviewed at 21:55 (accepted as a baseline). CPU: MPC tests 10 passed; tracks 0.5 and 1.0 m/s forward, 0.3 m/s sideways, 0.5 rad/s yaw with 0 to 3 falls per 16 robots in 10 s; cannot keep up at 1.5 m/s (43 falls in `evaluate.py`). GPU checks not run. In `.claude/worktrees/agent-a2fa4d9835e8da89e`. |
+| P5.4 pipeline and README | implementer | Running since 22:15 in `integration-p5`, from `docs/specs/hpc_phase5.md`: two new stages (`mpc`, `mimic`), giving `check ppo mpc motions mimic supermimic evaluate`. |
+| P5.2 AMP | implementer | Code done and diff reviewed by the main session at 21:20 (accepted). CPU: fast suite 70 passed, 4-iteration training, resume and `evaluate.py` work. GPU checks listed in the spec's Deviations are not run. In `.claude/worktrees/agent-aa519201bbcd5026d`. |
+| P5.1 DeepMimic | implementer | Code done and diff reviewed at 21:30 (accepted). CPU: fast suite 69 passed, sim 5 passed, train, resume, `record.py`, `evaluate.py` work. GPU checks not run; learning risk noted in the spec. In `.claude/worktrees/agent-ab26d07be6548768b`. |
+| Merge of DeepMimic, AMP and MPC onto `4c39b41` | implementer | Done 22:10 in `.claude/worktrees/integration-p5` (branch `integration-p5`, staged and untracked, uncommitted). CPU on the merged tree: `pytest -q` 108 passed, `pytest -q -m sim` 7 passed, `train.py --list` shows all six implemented. One hook set on `PPOAgent` (`checkpoint_kind`, `_extra_state`, `_load_extra_state`); AMP defaults to `flat_velocity`. Next: land it in the main checkout once the runner has finished with it, then the GPU checks. Three test runs hung at 100% CPU in `import warp` with a clean `dmesg`; reruns passed. |
+
+| Landing | main session | Done 22:45: the whole `integration-p5` tree (three algorithms, seven-stage pipeline, READMEs, hang watchdog in `scripts/dev/run_stages.sh`) is applied to the main checkout as uncommitted changes on `4c39b41`; the two trees are identical under `src configs tests scripts hpc README.md`. The diffs of all four pieces were reviewed by the main session. |
+| GPU validation of the landed tree | runner | **Blocked at 22:47, nothing run.** The GPU passthrough died at about 22:45 (uptime 7714 s): `nvidia-smi` cannot reach the driver, `ls /usr/lib/wsl/drivers` fails, `dmesg` shows `dxgk: dxgkio_escape: Ioctl failed: -22`. Same fault as 15:45. Needs `wsl --shutdown` from Windows (Joseph). Then run the steps under "Next after the restart" below. |
+| P0.9, P0.10 first visual pass | visual-check | Done 22:50 on `outputs/pipelines/smoke_local/report/`; see P0.9 and P0.10. Recording, plots and dashboards look sound. |
+
+### Next after the restart
+
+Nothing below has been run on the landed tree with a GPU. In the main checkout, with the
+conda env active and `MUJOCO_GL=glfw`; check `nvidia-smi` and the `dmesg` grep first.
+
+1. `python scripts/train.py --list` (all six implemented), `pytest -q` (about 108
+   passed on the CPU before landing), `pytest -q -m sim` (7 passed on the CPU).
+2. `PIPELINE_ID=smoke_p5 ATTEMPT_LIMIT_S=7200 scripts/dev/run_stages.sh outputs/debug/p5/run_stages`,
+   detached. Done when it prints `ALL STAGES PASSED` and
+   `outputs/pipelines/smoke_p5/report/` has an `evaluation.csv` row and a non-empty
+   `video.mp4` for each of the 8 runs (ppo and ppo_rslrl on flat and rough, mpc, amp,
+   deepmimic, supermimic). This settles P0.4, P0.5 (stage by stage), P5.1 to P5.4.
+3. Learning checks, one after the other:
+   `python scripts/train.py --algo amp --task flat_velocity --num-envs 1024 --max-iterations 300 --max-hours 0.65 --run-dir outputs/debug/p5/amp_learn`
+   and the same with `--algo deepmimic` (no `--task`) into `outputs/debug/p5/deepmimic_learn`.
+   Look at whether the return rises; DeepMimic's risk is in `docs/specs/deepmimic.md`.
+4. `visual-check` on the `smoke_p5` report videos and dashboards (P0.9, P0.10).
+5. Rewrite the "what was run" part of `hpc/README.md` from that evidence (P0.7), then
+   commit (P0.12).
+
+Both GPU losses today (about 15:45 and 22:45) came within minutes of a session
+force-killing hung GPU-bound processes. Unproven, but prefer letting the watchdog in
+`run_stages.sh` do the killing, and check `nvidia-smi` after any forced kill.
+
+The earlier rows of this table are finished work; the worktrees under `.claude/worktrees/`
+can be removed once the landed tree is committed.
+
+At 20:55 Joseph committed and pushed the base work as `4c39b41` (checkpoint change, dev
+scripts, docs, `hpc/config.sh` fix). The AMP and DeepMimic code is not in that commit; it
+is still in the worktrees above.
 
 ## Checklist
 
@@ -77,7 +157,11 @@ uncommitted changes, and given their GPU acceptance checks.
   mount (`ls /usr/lib/wsl/drivers` gave an input/output error), the same as that
   morning. Anything timed or trained on 11-16 between about 15:30 and the restart does
   not count.
-- [ ] **P0.1b GPU simulation loads again.** Since the restart of 11-16 about 16:45, every
+- [x] **P0.1b GPU simulation loads again.** Evidence, 11-16 21:00 after another restart:
+  the check command below exits 0 on a retry in 38 s (`outputs/debug/p0/warp_check_b3r.log`:
+  Warp banner "CUDA Toolkit 13.4, Driver 13.5", kernels compiled, "Finished at iteration
+  3/3"). The ptxas error did not recur. The first try hung in an import (see P0.13).
+  History: since the restart of 11-16 about 16:45, every
   script that simulates through `mujoco_warp` on `cuda:0` dies at startup with
   `Warp CUDA error 222 ... ptxas ... Unsupported .version 9.4; current version is '9.3'`
   and `Failed to load CUDA module 'mujoco_warp._src.smooth'`. Torch CUDA works and the
@@ -86,7 +170,12 @@ uncommitted changes, and given their GPU acceptance checks.
   Diagnosis in progress. Done when
   `python scripts/train.py --algo ppo --num-envs 64 --max-iterations 3 --run-dir outputs/debug/p0/warp_check`
   exits 0. Blocks P0.2, P0.4, P0.5, P0.8, P0.10 and every acceptance check in phase 5.
-- [ ] **P0.2 Land the checkpoint change.** Before it, a run killed by the stall watchdog
+- [x] **P0.2 Land the checkpoint change.** Evidence, 11-16 21:09: `pytest -q` "78 passed,
+  3 deselected", `pytest -q -m sim` "3 passed"; `scripts/dev/stall_test.sh` printed
+  "supervisor exit code 75 after 42 s frozen", "[supermimic] 454 clips, 256 envs,
+  iterations 200 -> 3000" and "PASS: exit code 75, ckpt_latest.pt present, resumed from
+  iteration 200" (`outputs/debug/p0/step3b.log`). Committed by Joseph in `4c39b41`.
+  History: before it, a run killed by the stall watchdog
   resumed from iteration 0, because `save_interval` is 2000. Done when the main session
   has read the diff, `pytest -q` passes, and a frozen-then-restarted run logs a resume
   from iteration 100 or later. Diff reviewed by the main session on 11-16 and found
@@ -98,14 +187,28 @@ uncommitted changes, and given their GPU acceptance checks.
   supervisor returned 75, `ckpt_latest.pt` exists and the run resumed from iteration 100
   or later. Checked with `bash -n` only; neither has been run in its new form (P0.1b).
   Also added `tests/test_supermimic_resume.py`: `17 passed in 0.96s`. Uncommitted.
-- [ ] **P0.4 Evaluation stage passes on its own.** It has never finished: about 9 minutes
+- [ ] **P0.4 Evaluation stage passes on its own.** Partly, 11-16 21:50: the command exits
+  0 in 2423 s and the report holds `evaluation.csv` (5 rows) and recordings for 4 of 5
+  runs (`outputs/debug/p0/step4.log`). The rsl_rl rough run has no recording: its
+  `record.py` died with the random TorchScript fault `wildcardElement INTERNAL ASSERT
+  FAILED ... memory_dag.cpp:184` (P0.13), and the stage carried on. Inside the whole
+  pipeline the stage has not passed yet (import hang). Still to do: a run with all
+  recordings. History: it had never finished: about 9 minutes
   per 1600-frame video, then three hangs killed at the 50-minute limit. Cause unconfirmed
   (kernel fault or a `torch.compile` hang). Done when
   `SMOKE=1 hpc/submit_pipeline.sh --local --id smoke_local --only evaluate` exits 0 and
   `outputs/pipelines/smoke_local/report/` holds `evaluation.csv` and a recording per run.
   If it hangs, get thread stacks (`kill -USR1 <pid>`, or wait for the 5-minute stall dump)
   before changing code. Blocked by P0.1.
-- [ ] **P0.5 Whole local smoke pipeline in one command.** Done when
+- [ ] **P0.5 Whole local smoke pipeline in one command.** Not passed, 11-16 21:50 to
+  22:45: eight attempts (`outputs/debug/p0/step5*.log`), none through all five stages.
+  check, ppo, motions and supermimic each passed in at least one attempt; evaluate never
+  did inside the pipeline. Every stop but one was a hung Python import (P0.13); one was
+  `torch.AcceleratorError: CUDA error: unknown error` in a SuperMimic segment. The
+  `aten::mul` flake did not appear. Plan: land the seven-stage tree (P5.4) and validate
+  stage by stage with `scripts/dev/run_stages.sh`, which is getting a hang watchdog. On
+  this machine "one command, no retry" may not be reachable; the cluster run (P1.3) is
+  the real test of that. Originally: done when
   `SMOKE=1 PIPELINE_ID=smoke_local2 hpc/submit_pipeline.sh --local` exits 0. The only
   single-command attempt failed in the check stage with
   `RuntimeError: MALFORMED INPUT: Unhandled node kind (in computeValue): aten::mul` from
@@ -117,13 +220,28 @@ uncommitted changes, and given their GPU acceptance checks.
   `logs/` is already ignored by git. Uncommitted.
 - [ ] **P0.7 Make `hpc/README.md` true.** It says every stage ran end to end locally.
   Rewrite that part from the evidence of P0.4 and P0.5. Blocked by P0.5.
-- [ ] **P0.8 `play.py` on a SuperMimic run.** Never tried. Done when
+- [x] **P0.8 `play.py` on a SuperMimic run.** Evidence, 11-16 22:45:
+  `python scripts/play.py outputs/supermimic/motion_tracking/smoke_local3_go1_s0` ran its
+  60 s under `timeout 60` with no traceback (`outputs/debug/p0/step6b.log`); it has no
+  duration flag. The first try died with the random TorchScript fault (P0.13).
+  Originally: never tried. Done when
   `python scripts/play.py outputs/supermimic/motion_tracking/smoke_local_go1_s0` plays
   without error (run folder name unverified; see `outputs/pipelines/smoke_local/runs.txt`).
-- [ ] **P0.9 Look at the SuperMimic training dashboard.** Its legend was fixed and never
+- [x] **P0.9 Look at the SuperMimic training dashboard.** Evidence, 11-16 22:50,
+  `visual-check`: every panel has data, the "Imagined reward per term" legend sits below
+  its panel and the other legends are in clear corners. The other dashboards and
+  `compare_flat_velocity.png` it opened are also fine (curves of 2 or 3 points, as
+  expected for 3 iterations). Originally: its legend was fixed and never
   viewed again. `outputs/pipelines/smoke_local/report/training_supermimic_motion_tracking_go1_s0.png`.
   A first pass by `visual-check` is enough.
-- [ ] **P0.10 Finish and check the recordings.** 3 real runs (PPO flat, PPO rough, rsl_rl
+- [ ] **P0.10 Finish and check the recordings.** Partly, 11-16 22:50: `visual-check`
+  looked at the 4 smoke recordings in `outputs/pipelines/smoke_local/report/` (PPO flat,
+  PPO rough, rsl_rl flat, SuperMimic): right format, readable overlay, no blank or frozen
+  video, plots and `summary.txt` present. The main session opened the PPO rough frames it
+  flagged: the robot stands still on the white flat spawn tile with the terrain patches
+  in the distance, which is what a 3-iteration policy does; not a tooling fault. Still to
+  do: the rsl_rl rough recording (crashed on the random TorchScript fault), the three new
+  methods' recordings (`smoke_p5`), and the 3 real runs. Originally: 3 real runs (PPO flat, PPO rough, rsl_rl
   flat) and 5 smoke runs. Done when each has a recording folder and `visual-check` has
   looked at every video. Known from an earlier recording of the flat PPO policy: 2 of 16
   robots fell walking backward at 0.5 m/s, 2 fell stopping from 1.5 m/s, top speed 1.31
@@ -139,6 +257,17 @@ uncommitted changes, and given their GPU acceptance checks.
 - [ ] **P0.12 Commit and tidy.** Commit P0.2 to P0.11, the two file-mode changes and the
   deleted `Zone.Identifier` file. Delete the two aborted run folders
   `outputs/ppo*/flat_velocity/20261114_1142*`. `main` matched `origin/main` at 15:45.
+
+- [ ] **P0.13 Machine faults on the laptop (Joseph's call).** Measured 11-16 21:00 to
+  22:45 by the runner, with `dmesg` clean and `autoMemoryReclaim=disabled`: about 9 of 45
+  fresh Python processes hung during import (100% CPU, R state, no output, before CUDA
+  init; innermost frames in pure Python such as `inspect.signature` in triton and
+  `Function.__init__` in warp; once `conda activate` itself). The same imports normally
+  take 1 to 4 s, and the hangs also happened at load average 1 to 2, so it is not CPU
+  contention. Separately, random `wildcardElement INTERNAL ASSERT FAILED` from TorchScript
+  (twice) and one `CUDA error: unknown error` / Warp error 999. Not a code fault; a code
+  change will not fix it. Next suspects: host RAM (Windows Memory Diagnostic), the WSL
+  kernel build. Mitigation in the repo: the hang watchdog in `scripts/dev/run_stages.sh`.
 
 ### Phase 1: first cluster run, with the Go1
 
@@ -171,7 +300,7 @@ submission, module and conda paths, and EGL rendering on compute nodes.
 The importer is finished and was exercised on a deliberately awkward synthetic robot
 (`testdog`). It has not seen the real URDF. `assets/robots/custom/` is empty.
 
-- [ ] **P2.1 Import the URDF.** Blocked by decision 5.
+- [ ] **P2.1 Import the URDF.** Blocked by decision 3.
   `python scripts/import_robot.py robot.urdf --name <name> --kp ... --kd ...`, then read
   `assets/robots/<name>/import_report.md`. Guide: `docs/robot_import.md`.
 - [ ] **P2.2 Take the measurements** in `docs/measurement_protocol.md` (mass, centre of
@@ -203,6 +332,24 @@ The importer is finished and was exercised on a deliberately awkward synthetic r
 - [ ] **P4.1 Write the export and runtime.** `scripts/export_policy.py` and
   `src/quadruped_rl/deploy/{export,obs_builder,policy_runner,safety}.py` are stubs.
   Observation normalisation has to be baked into the exported file.
+  Target hardware is a Raspberry Pi 4 with moteus r4.11 controllers (decision 7), which
+  sets these constraints; check each against the moteus reference before relying on it:
+  - The Pi has no GPU, so the export has to run on an ARM CPU (ONNX Runtime or
+    TorchScript) and the runtime has to hold the control rate there. Measure the
+    inference time and the loop jitter on the Pi itself.
+  - moteus speaks CAN-FD and the Pi has no CAN-FD port, so an adapter is needed (open
+    decision 8). Twelve controllers have to be commanded and read back within one
+    control period; measure the round trip.
+  - moteus runs its own position loop. The policy's joint targets go out as position
+    commands with the simulator's kp and kd, and the controller's units are revolutions,
+    not radians, with the gear ratio configured on the controller. The gains in
+    `configs/robots/<name>.yaml` have to be converted, and that conversion belongs in
+    the joint order, sign and zero-offset box of `docs/deployment_checklist.md`.
+  - The controller's torque, velocity and position limits and its watchdog timeout are
+    a second safety layer under `deploy/safety.py`; set them, and make the simulated
+    torque limits match what the controller will enforce.
+  - The actuator model for P2.3 should be fitted from moteus telemetry (position,
+    velocity, torque, at the control rate), which the controller reports in each reply.
 - [ ] **P4.2 Work through `docs/deployment_checklist.md`.** All 8 boxes are open: sim2sim,
   joint order, sign and zero offsets, IMU frame, pose, gains and rate, normalisation,
   log comparison, safety layer.
@@ -261,7 +408,8 @@ Each gets a spec from the main session, then an implementer, then a diff review.
 - One bare-import failure in 65 and one import-test failure in 25, never investigated.
   Probably the kernel fault.
 - A100 training speed, and whether EGL rendering works on the compute nodes.
-- Everything about the team robot's hardware interface.
+- The team robot's hardware interface beyond the Pi 4 and the moteus r4.11 controllers
+  (open decision 8).
 - Whether the leftover CUDA 12.0 apt packages from 11-14 were purged.
 
 ## Backlog, off the critical path
@@ -274,6 +422,27 @@ Each gets a spec from the main session, then an implementer, then a diff review.
 - The motion data is licensed for research only (AI4Animation is CC BY-NC, the Tencent
   set is research-only). Check before any commercial use.
 - `configs/robots/testdog.yaml` records a `/tmp` scratchpad path as its source URDF.
+- Report polish, from the visual check of 11-16: the fall counts in `evaluation.csv`
+  (from `evaluate.py`, 32 robots) and in each run's `summary.txt` (from `record.py`, 16
+  robots) differ and nothing says they are separate passes; label them. The spawn tile of
+  the rough terrain renders plain white, which makes motion hard to judge in the video; a
+  grid or checker texture would help.
+- `hpc/22_mpc.slurm` requests a GPU for a job that takes seconds on a CPU; it will wait in
+  the GPU queue. Harmless, but a CPU partition would start sooner if the cluster has one.
+- From the review of the phase 5 diff, 11-16 (read only, not run-tested):
+  - `hpc/35_train_mimic.slurm:88-92`: a DeepMimic or AMP run that reaches `MIMIC_MAX_HOURS`
+    before its last iteration only prints a warning and exits 0, so the report scores a
+    partly trained policy with nothing to mark it. Mark such rows in the report, or check
+    the iteration count after P1.4 has measured the A100 speed.
+  - `mpc_baseline/core.py:164-173`: when the command drops to zero in mid-swing, all four
+    legs count as stance at once, so a force is planned for a foot that has just lifted.
+    Plausible, not reproduced.
+  - `amp/agent.py:118-128`: the step on which an environment ends gets no style reward, a
+    small extra termination cost. `amp/agent.py:140-141`: the replay buffer is not saved,
+    so the first discriminator updates after `--continue-run` see only new windows. Both
+    are as designed; listed so they are not rediscovered.
+- With AMP and DeepMimic added, the `check` stage may come close to its 45-minute limit
+  on the cluster; look at its wall time in the first cluster smoke run (P1.3).
 
 ## Log
 
@@ -296,3 +465,11 @@ Each gets a spec from the main session, then an implementer, then a diff review.
   do not exercise the GPU kernels; worth fixing once the cause is known. The old
   `stall_test.sh` wrote into the repo root when run by relative path; the copy in
   `scripts/dev/` does not.
+- 2026-11-16 22:45 (`2b7b9bd3`): GPU passthrough lost a second time, right after the
+  landing of `integration-p5` in the main checkout; nothing was validated on a GPU.
+- 2026-11-16 22:56 (`ac9d5b2f`): WSL restarted by Joseph, GPU healthy. Started the GPU
+  validation of the landed tree and an independent review of its diff.
+- 2026-11-16 23:57 (`ac9d5b2f`): GPU passthrough lost a third time, between 23:23 and
+  23:54, one hour after boot, with only CPU tests run. The review found no serious defect.
+  The CPU tests pass on the landed tree. `run_stages.sh` now stops on a lost GPU. Joseph
+  gave the phase 4 hardware: Raspberry Pi 4 and moteus r4.11 (decision 7).

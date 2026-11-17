@@ -1,5 +1,5 @@
 # Reference-motion tracking: follow retargeted motion-capture clips frame by frame.
-# For SuperMimic (and, later, DeepMimic on the same clips).
+# For SuperMimic and DeepMimic, which train on the same clips in the same environment.
 #
 # The environment is the SuperMimic backend's: observations, the tracking reward and its
 # scales come from the robot's SuperMimic RobotSpec, not from this file. This file says
