@@ -18,6 +18,8 @@ API errors with their status unreported.
 - Division of labour between the main session and subagents is in `~/.claude/CLAUDE.md`.
   Subagents start cold, so a brief needs the [environment facts](#environment-and-gotchas)
   pasted in.
+- What the real robot needs before it moves (team inputs, hardware, the interface
+  numbers, moteus settings, code still to write) is in `docs/robot_requirements.md`.
 - Detail lives in the guides, not here: `docs/robot_import.md`, `docs/measurement_protocol.md`,
   `docs/supermimic.md`, `docs/deployment_checklist.md`, `docs/setup_wsl2.md`, `hpc/README.md`.
 
@@ -52,6 +54,7 @@ Still open:
 8. **Rest of the hardware interface for phase 4:** how the Pi reaches the controllers
    (mjbots pi3hat, fdcanusb, or another CAN-FD adapter), which IMU and where it is
    mounted, the motors and gear ratios, and the battery voltage. Not needed before P4.1.
+   The full list of open questions is in `docs/robot_requirements.md`, section 1.
 
 ## Work in flight
 
