@@ -12,8 +12,9 @@
 # want to look at into one folder to copy off the cluster:
 #   <pipeline state>/report/
 #     evaluation.csv            one row per run (falls, velocity error, smoothness, clip benchmark)
-#     training_<run>.png        training curves of each run
-#     compare_<task>.png        the runs of one task side by side
+#     training_<run>.png        training curves of each run (not MPC: nothing is trained)
+#     compare_<task>.png        the runs of one task side by side (more than 8 runs:
+#                               compare_<task>_s<seed>.png, one per seed)
 #     <run>/video.mp4, plots.png, summary.txt, rollout files for scripts/replay.py
 # Runs after training whether or not every training job succeeded; runs without a
 # checkpoint are skipped.
@@ -51,14 +52,35 @@ name_of() {
 }
 
 echo "==== [1] Training curves ===="
+# Runs that logged nothing (the MPC baseline is built, not trained) have no curves.
+CURVED=()
 for r in "${RUNS[@]}"; do
+  if [[ -n "$(find "$r" -name 'events.out.tfevents.*' -print -quit 2>/dev/null)" ]]; then CURVED+=("$r"); fi
+done
+for r in "${CURVED[@]}"; do
   python scripts/plot_training.py "$r" --out "$REPORT/training_$(name_of "$r").png" || echo "  (plot failed for $r)"
 done
-for task in $(for r in "${RUNS[@]}"; do basename "$(dirname "$r")"; done | sort -u); do
+# One comparison per task. A plot holds at most 8 legible lines; a task with more runs
+# gets one comparison per seed instead (compare_<task>_s<seed>.png: one run per method).
+compare() {
+  local out="$1"; shift
+  if [[ $# -gt 1 && $# -le 8 ]]; then
+    python scripts/plot_training.py "$@" --out "$out" || echo "  (comparison failed: $out)"
+  elif [[ $# -gt 8 ]]; then
+    echo "  (no comparison $out: $# runs, at most 8 per plot)"
+  fi
+}
+for task in $(for r in "${CURVED[@]}"; do basename "$(dirname "$r")"; done | sort -u); do
   same=()
-  for r in "${RUNS[@]}"; do [[ "$(basename "$(dirname "$r")")" == "$task" ]] && same+=("$r"); done
-  if [[ ${#same[@]} -gt 1 && ${#same[@]} -le 8 ]]; then
-    python scripts/plot_training.py "${same[@]}" --out "$REPORT/compare_$task.png" || true
+  for r in "${CURVED[@]}"; do [[ "$(basename "$(dirname "$r")")" == "$task" ]] && same+=("$r"); done
+  if [[ ${#same[@]} -le 8 ]]; then
+    compare "$REPORT/compare_$task.png" "${same[@]}"
+  else
+    for seed in $(for r in "${same[@]}"; do basename "$r" | sed 's/.*_s//'; done | sort -u); do
+      seeded=()
+      for r in "${same[@]}"; do [[ "$(basename "$r")" == *"_s$seed" ]] && seeded+=("$r"); done
+      compare "$REPORT/compare_${task}_s$seed.png" "${seeded[@]}"
+    done
   fi
 done
 

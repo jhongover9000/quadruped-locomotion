@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from quadruped_rl.algorithms.base import Agent
-from quadruped_rl.algorithms.supermimic import backend
+from quadruped_rl.algorithms.supermimic import backend, tracking
 
 
 class SuperMimicAgent(Agent):
@@ -97,58 +97,17 @@ class SuperMimicAgent(Agent):
                    mirrors: bool = False) -> list[Path]:
         """Clips of this run's motion library: by manifest group ("train", "holdout", ...),
         by name, or everything the task trains on."""
-        root = backend.ensure_importable(self.algo_cfg)
-        from supermimic.envs.mdp.motion_library import discover_npz
-
-        spec = backend.spec_name(self.robot.name, self.algo_cfg)
-        motions = self.task_cfg["motions"]
-        exclude = motions.get("exclude")
-        if not mirrors:
-            exclude = "_mirror$" if not exclude else f"(?:{exclude})|_mirror$"
-        files = discover_npz(
-            backend.resolve_path(motions["dir"], root, spec), names=names,
-            manifest=backend.resolve_path(motions.get("manifest"), root, spec),
-            group=groups if names is None else None, exclude=exclude)
-        if not files:
-            raise FileNotFoundError(
-                f"No clips for groups={groups} names={names} in "
-                f"{backend.resolve_path(motions['dir'], root, spec)} (build the motion library "
-                "first: docs/supermimic.md)")
-        return files
+        return tracking.clip_files(self.robot.name, self.task_cfg, self.algo_cfg, groups, names, mirrors)
 
     def make_env(self, num_envs: int, play: bool = False, seed: int | None = None,
                  clips: list[Path] | None = None, terminations: bool = True):
         """The tracking environment. ``play`` uses the evaluation settings of the reference
         (no noise, no randomization, episodes start at a clip's first frame and run to its end)."""
-        backend.ensure_importable(self.algo_cfg)
-        from supermimic.envs import SuperMimicEnvCfgArgs, make_env
-        from supermimic.robots import set_robot_overrides
-
-        env_cfg = self.algo_cfg.get("env") or {}
-        # Actuator overrides must be set before the robot spec is first used.
-        set_robot_overrides(stiffness=env_cfg.get("stiffness"), action_scale=env_cfg.get("action_scale"))
         if not play:
             raise NotImplementedError("training environments are built by the reference Trainer")
-        motions = self.task_cfg["motions"]
-        term = self.task_cfg.get("terminations") or {}
-        files = clips or self.clip_files(motions.get("eval_groups"))
-        off = {} if terminations else {"root_height_threshold": 1.0e3, "root_tilt_threshold": 1.0e3,
-                                       "support_foot_threshold": 0.0}
-        args = SuperMimicEnvCfgArgs(
-            npz_files=[str(f) for f in files],
-            robot=backend.spec_name(self.robot.name, self.algo_cfg),
-            num_envs=num_envs,
-            future_frames=int(motions.get("future_frames", 10)),
-            episode_length_s=1.0e5,              # the clip's end decides
-            action_noise_std=0.0, obs_noise=False, reset_noise=False, domain_randomization=False,
-            sampling_mode="start", record_transitions=False,
-            seed=self.seed if seed is None else seed,
-            anchor_obs=bool(env_cfg.get("anchor_obs", False)),
-            **({"root_height_threshold": term.get("root_height_error_m"),
-                "root_tilt_threshold": term.get("root_tilt_error"),
-                "support_foot_threshold": env_cfg.get("support_foot_threshold")} | off),
-        )
-        return make_env(args, device=self.device)
+        return tracking.play_env(self.robot.name, self.task_cfg, self.algo_cfg, num_envs, self.device,
+                                 seed=self.seed if seed is None else seed, clips=clips,
+                                 terminations=terminations)
 
     def make_policy(self, env, checkpoint: Path):
         backend.ensure_importable(self.algo_cfg)
@@ -172,25 +131,14 @@ class SuperMimicAgent(Agent):
         """The reference's evaluation: every clip of ``groups`` played once from its first
         frame, deterministically. Returns its summary (clips, failed, normalized return)."""
         backend.ensure_importable(self.algo_cfg)
-        from supermimic.eval.benchmark import (
-            load_policy_from_checkpoint,
-            run_benchmark,
-            save_results,
-            summarize,
-        )
+        from supermimic.eval.benchmark import load_policy_from_checkpoint
 
-        files = [str(f) for f in self.clip_files(groups)]
+        files = self.clip_files(groups)
         policy, cfg = load_policy_from_checkpoint(checkpoint, self.device)
         env = cfg["env"]
-        results = run_benchmark(
-            policy, files, device=self.device, num_envs=num_envs,
+        return tracking.benchmark(
+            policy, files, robot=cfg["robot"], device=self.device, num_envs=num_envs,
             future_frames=env["future_frames"], anchor_obs=env.get("anchor_obs", False),
-            robot=cfg["robot"], support_foot_threshold=env.get("support_foot_threshold"),
+            support_foot_threshold=env.get("support_foot_threshold"),
             root_height_threshold=env.get("root_height_threshold"),
-            root_tilt_threshold=env.get("root_tilt_threshold"), verbose=False)
-        if out is not None:
-            save_results(results, out)
-        summary = summarize(results)
-        summary["worst"] = [{"name": r.name, "norm_return": r.norm_return, "failed": r.failed}
-                            for r in sorted(results, key=lambda r: r.norm_return)[:5]]
-        return summary
+            root_tilt_threshold=env.get("root_tilt_threshold"), out=out)

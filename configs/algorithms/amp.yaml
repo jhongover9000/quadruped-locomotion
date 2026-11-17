@@ -1,13 +1,24 @@
-# Adversarial Motion Priors: task reward + discriminator style reward.
+# Adversarial Motion Priors: task reward + discriminator style reward
+# (src/quadruped_rl/algorithms/amp/). PPO settings come from ppo.yaml.
 inherit: algorithms/ppo.yaml
 name: amp
-default_task: rough_velocity
+# Flat by default: the style clips are recorded on flat ground and the base-height feature is measured from the env origin (rough_velocity is allowed).
+default_task: flat_velocity
 amp:
-  motion_dir: data/motions/retargeted
+  # The style: clips of the library SuperMimic trains on (50 Hz .npz, the control rate),
+  # found like SuperMimic's: relative paths are tried in this repository, then in the
+  # reference repository ($SUPERMIMIC_ROOT or ../supermimic-quadruped). {robot} is our robot name.
+  motions:
+    dir: data/npz/{robot}
+    manifest: data/npz/{robot}/manifest.csv
+    groups: train,hard                # manifest groups (holdout stays out, as for SuperMimic)
+    categories: [walk, trot, turn, turn_in_place, backward, idle]   # manifest categories; null: all
+    exclude: null                     # regex on clip names; null keeps the mirrored copies
+    clip_weight_alpha: 0.5            # p(clip) ~ duration^alpha (1 = uniform over frames)
   disc_hidden: [1024, 512]
-  disc_obs_frames: 2          # consecutive states shown to the discriminator
+  disc_obs_frames: 2                  # consecutive states shown to the discriminator
   disc_learning_rate: 1.0e-4
   grad_penalty: 10.0
-  replay_buffer_size: 1000000
-  task_reward_weight: 0.5
+  replay_buffer_size: 1000000         # policy windows kept for the discriminator
+  task_reward_weight: 0.5             # r = w_task r_task + w_style dt r_style (see agent.py)
   style_reward_weight: 0.5

@@ -13,14 +13,17 @@ Each method is a choice of *objective* (what is rewarded) and *optimizer* (how i
 
 | Optimizer | Task reward (velocity) | Imitation reward (track a clip) | Style reward (match motion distribution) |
 |---|---|---|---|
-| PPO (model-free) | Baseline | DeepMimic | AMP |
-| World model + BPTT | Extension | SuperMimic-style | - |
-| None (control) | Convex MPC | - | - |
+| PPO (model-free) | Baseline (**built**) | DeepMimic (**built**) | AMP (**built**) |
+| World model + BPTT | Extension | SuperMimic-style (**built**) | - |
+| None (control) | Convex MPC (**built**) | - | - |
 
-Built so far: **PPO** (ours, plus rsl_rl's as a reference) on the velocity tasks, and
-**SuperMimic** on motion tracking. DeepMimic, AMP and MPC are planned; `train.py` refuses
-them rather than training something else under their name. `python scripts/train.py --list`
-prints which algorithm runs on which task.
+Built so far: **PPO** (ours, plus rsl_rl's as a reference), **AMP** and the **convex MPC**
+baseline (built, not trained) on the velocity tasks, and **SuperMimic** and **DeepMimic**
+on motion tracking. The world-model velocity extension is not built yet.
+`python scripts/train.py --list` prints which algorithm runs on which task. Known limits
+are listed under Deviations in [docs/specs/mpc.md](docs/specs/mpc.md) (the MPC falls at
+1.5 m/s), [docs/specs/deepmimic.md](docs/specs/deepmimic.md) (its learning check on the
+GPU is still pending) and [docs/specs/amp.md](docs/specs/amp.md).
 
 ## Repository layout
 
@@ -113,8 +116,9 @@ one), so plots use simulated environment steps on the x-axis.
 
 ## On the cluster
 
-`hpc/` chains Slurm jobs: environment check, PPO, motion library, SuperMimic (in resumable
-segments), evaluation and a report folder. See [hpc/README.md](hpc/README.md).
+`hpc/` chains Slurm jobs: environment check, PPO, the MPC baseline, motion library,
+DeepMimic and AMP, SuperMimic (in resumable segments), evaluation and a report folder.
+See [hpc/README.md](hpc/README.md).
 
 ```bash
 bash hpc/00_setup.sh                 # once, on the login node
@@ -129,7 +133,7 @@ hpc/submit_pipeline.sh               # the real thing
 | 1. Infrastructure | PPO walks on flat ground; metrics logged (**built**) | `envs/`, `algorithms/ppo/`, `scripts/train.py` |
 | 2. Terrain | Terrain curriculum and domain randomization (**built**), sim2sim | `envs/terrain.py`, `envs/domain_randomization.py`, `scripts/sim2sim.py` |
 | 3. Reference motions | Retargeted mocap library (**built** with the SuperMimic repository's tools); trajectory-optimized gaits | `motions/`, `scripts/motions.py`, `scripts/generate_trajopt_gait.py` |
-| 4. Imitation methods | SuperMimic (**built**, via the reference implementation); DeepMimic, AMP | `algorithms/supermimic/`, `algorithms/deepmimic/`, `algorithms/amp/` |
+| 4. Imitation methods | SuperMimic (**built**, via the reference implementation); DeepMimic, AMP (**built**) | `algorithms/supermimic/`, `algorithms/deepmimic/`, `algorithms/amp/` |
 | 5. Comparison | Same evaluation for all (**started**: `evaluate.py`, `plot_training.py`); speed-vs-jerk Pareto fronts | `evaluation/`, `configs/eval/`, `configs/sweeps/`, `scripts/sweep.py` |
 | 6. Team robot | Measure, system ID, actuator model, retrain, hardware | `sysid/`, `actuators/`, `deploy/`, `docs/` |
 

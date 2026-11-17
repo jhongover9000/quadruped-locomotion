@@ -103,3 +103,28 @@ SuperMimic repo; the `hpc/` pipeline and the README method table (task P5.4); co
 
 Record here anything you had to do differently from this spec and why. If you hit a
 choice the spec does not cover, take the conservative option, note it here and continue.
+
+Implementation (worktree `agent-ab26d07be6548768b`), 2026-11-16. Written up by the main
+session from the implementer's report, because the implementer could not write outside
+its worktree:
+
+- **Shared module:** clip discovery, the play and training environments, `MotionSampler`
+  and the clip benchmark live in `algorithms/supermimic/tracking.py`. `SuperMimicAgent`
+  now calls it; its behaviour is unchanged.
+- **Training environment arguments are copied from the reference Trainer**
+  (`train_env_args`), because the Trainer builds its environment inline. A test compares
+  the two calls in the source so they cannot drift apart silently.
+- **`deepmimic.yaml` repeats the `backend:` and `env:` sections of `supermimic.yaml`** so a
+  saved run is self-contained; a test checks they match. Only the action noise differs (0:
+  PPO explores through its own policy noise).
+- **`max_iterations: 2000`** matches SuperMimic's simulated-step budget. It was not chosen
+  from a learning curve.
+- **Observations:** actor and critic both see the backend's `policy` group followed by its
+  `goal` group. The goal window stands in for DeepMimic's phase variable.
+- **Checkpoints** are PPO's plus a `deepmimic` entry (observation groups and the reset
+  sampler's statistics), through two new no-op hooks on `PPOAgent`.
+- **Learning risk, not yet checked on the GPU:** in the 5-iteration CPU run at
+  `init_noise_std: 1.0` the action-rate penalty was about twice the summed tracking reward,
+  so returns start negative, and the adaptive learning rate fell to its 1e-5 floor. If
+  returns do not rise in the 300-iteration check, lower `init_noise_std` first.
+- **In a git worktree** `../supermimic-quadruped` does not resolve; set `SUPERMIMIC_ROOT`.

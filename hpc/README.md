@@ -1,17 +1,25 @@
 # Training on the cluster (Slurm)
 
-A chain of Slurm jobs that trains every implemented method, evaluates the results and
-collects a report. Each stage starts when the one before it has finished.
+A chain of Slurm jobs that trains every implemented method (PPO, rsl_rl PPO, AMP,
+DeepMimic, SuperMimic) and builds the MPC baseline, evaluates the results and collects a
+report. Each stage starts when the one it depends on has finished.
 
 ```
-check ──> ppo (array) ──> motions ──> supermimic 1 ──> supermimic 2 ──> supermimic 3 ──> evaluate
+check ──┬──> ppo (array) ──> motions ──┬──> mimic (array) ─────────────────────────────────┬──> evaluate
+        │                              └──> supermimic 1 ──> supermimic 2 ──> supermimic 3 ┤
+        └──> mpc ──────────────────────────────────────────────────────────────────────────┘
 ```
+
+`evaluate` also waits for `ppo` (however each finished). With `--parallel`, `motions`
+starts right after `check` instead of after `ppo`.
 
 | Stage | File | What it does | Time limit |
 |---|---|---|---|
-| check | `10_check.slurm` | GPU visible, tests pass, a few training iterations, offscreen rendering | 45 min |
+| check | `10_check.slurm` | GPU visible, tests pass, a few training iterations of every method (AMP and DeepMimic only if the motion library exists), offscreen rendering | 45 min |
 | ppo | `20_train_ppo.slurm` | PPO velocity policies; one array task per algorithm × task × seed | 8 h each |
+| mpc | `22_mpc.slurm` | Builds the convex MPC baseline (nothing to train), unless it exists | 10 min |
 | motions | `30_supermimic_motions.slurm` | Builds the SuperMimic motion library, unless it exists | 3 h |
+| mimic | `35_train_mimic.slurm` | DeepMimic and AMP; one array task per `MIMIC_RUNS` entry × seed, one time-limited job each | `MIMIC_TIME` (20 h) each |
 | supermimic | `40_train_supermimic.slurm` | SuperMimic training, as chained segments of one run | 20 h each |
 | evaluate | `50_evaluate.slurm` | Evaluation table, training curves, videos, gathered in one folder | 4 h |
 
@@ -56,7 +64,7 @@ were modelled on.
 
 ```bash
 hpc/submit_pipeline.sh                      # everything, one stage after another
-hpc/submit_pipeline.sh --parallel           # PPO and SuperMimic branches at the same time
+hpc/submit_pipeline.sh --parallel           # PPO and the motion branch at the same time
 hpc/submit_pipeline.sh --only ppo           # a single stage
 hpc/submit_pipeline.sh --skip motions       # leave a stage out (repeatable)
 hpc/submit_pipeline.sh --id paper_v1        # name the submission (default: date_time)
@@ -67,11 +75,14 @@ hpc/submit_pipeline.sh --local              # no Slurm: run the stages here in o
 Watch with `squeue -u $USER`; logs are in `/scratch/$USER/logs/quad_*`.
 
 **Order and failures.** A failed check cancels everything after it. A failed PPO task
-does not stop SuperMimic. Evaluation runs on whatever finished training.
+does not stop the motion branch (motions, mimic, SuperMimic). Evaluation runs on whatever
+finished training.
 
 **Where results go.** Runs: `outputs/<algo>/<task>/<id>_<robot>_s<seed>/`. The report:
-`outputs/pipelines/<id>/report/` with `evaluation.csv`, `training_*.png`,
-`compare_<task>.png`, and per run a video, diagnostic plots, a summary and replay files.
+`outputs/pipelines/<id>/report/` with `evaluation.csv`, `training_*.png` (not for the
+MPC baseline, which logs no training), `compare_<task>.png` (a task with more than 8
+trained runs gets one `compare_<task>_s<seed>.png` per seed instead, one run per method),
+and per run a video, diagnostic plots, a summary and replay files.
 Copy it home and watch rollouts offline, without a GPU:
 
 ```bash
@@ -86,6 +97,9 @@ python scripts/replay.py ./report/<run>/
   directory from the last checkpoint (`scripts/train.py --continue-run`). A segment that
   finds the run finished exits at once. If the last segment ends before training does, its
   log prints the command that adds more segments.
+* **DeepMimic and AMP get one job per run**, not a chain: each stops cleanly after
+  `MIMIC_MAX_HOURS`. A run that did not reach its last iteration says so in its log;
+  `hpc/submit_pipeline.sh --only mimic --id <id>` continues it.
 * **Resubmitting is safe.** Run directories are named after the pipeline id, and a stage
   continues a run that already exists. After a node failure, submit the same stage again
   with the same `--id`.
@@ -106,6 +120,22 @@ here, `SM_NUM_ENVS=8192`, is sized for a 40 GB A100; on an 80 GB A100 set
 `SM_NUM_ENVS=20480`. If a job dies with CUDA out of memory, halve it. The speed on an
 A100 has not been measured yet: the first segment's log shows iterations per second, and
 `SM_SEGMENTS` should be set from that.
+
+## DeepMimic, AMP and MPC settings
+
+In `config.sh`, next to the PPO settings (override them in `config.local.sh` like the rest):
+
+| Setting | Default | `SMOKE=1` | Meaning |
+|---|---|---|---|
+| `MIMIC_RUNS` | `deepmimic:motion_tracking amp:flat_velocity` | same | `algo:task` pairs; each is trained for every seed in `SEEDS` |
+| `DM_NUM_ENVS`, `DM_ITERATIONS` | 4096, 2000 | 256, 3 | DeepMimic (2000 = `deepmimic.yaml`) |
+| `AMP_NUM_ENVS`, `AMP_ITERATIONS` | 4096, 1500 | 64, 3 | AMP (1500 = `ppo.yaml`, which AMP inherits) |
+| `MIMIC_MAX_HOURS` | 19 | 1 | each run stops cleanly after this long |
+| `MIMIC_TIME` | `20:00:00` | `01:00:00` | Slurm time limit of each mimic job |
+
+The time defaults mirror one SuperMimic segment and are provisional until the A100 speed
+is measured. The MPC baseline has no settings here: stage `mpc` builds it on
+`flat_velocity` from `configs/algorithms/mpc.yaml`.
 
 ## Not tested here
 

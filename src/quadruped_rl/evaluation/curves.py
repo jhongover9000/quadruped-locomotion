@@ -267,6 +267,13 @@ NAMED = [
                                "Perf/learning_time": "learning"}, False),
     ("Clip sampler: sampling entropy", {"sampler/entropy": "entropy"}, False),
     ("Clip sampler: mean return per clip bin", {"sampler/bin_return_mean": "bin return"}, False),
+    # AMP (algorithms/amp/agent.py)
+    ("AMP discriminator loss", {"AMP/disc_loss": "total", "AMP/disc_lsgan_loss": "least squares",
+                                "AMP/disc_grad_penalty": "gradient penalty"}, False),
+    ("AMP discriminator output (+1 clip-like, -1 policy-like)",
+     {"AMP/disc_clip_mean": "on clips", "AMP/disc_policy_mean": "on policy"}, False),
+    ("AMP style reward per step (0 to 1)", {"AMP/mean_style_reward": "style"}, False),
+    ("AMP task reward per step", {"AMP/mean_task_reward": "task"}, False),
 ]
 # What "return" means depends on the trainer's tag.
 RETURN_LABELS = {"train/episode_norm_return": "Episode return (normalized: 1 = perfect tracking)",

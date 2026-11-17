@@ -11,9 +11,12 @@ from pathlib import Path
 
 # Keys that identify each trainer's checkpoint dict.
 _SIGNATURES = {
+    "amp": ("model", "optimizer", "learning_rate", "discriminator"),   # before ppo: a superset
+    "deepmimic": ("model", "optimizer", "learning_rate", "deepmimic"),   # before ppo: a superset
     "ppo": ("model", "optimizer", "learning_rate"),
     "ppo_rslrl": ("actor_state_dict",),
     "supermimic": ("wm", "policy", "critic"),
+    "mpc": ("mpc", "kinematics", "rigid_body"),
 }
 ALL_PATTERNS = ("checkpoints/model_*.pt", "model_*.pt", "ckpt_[0-9]*.pt")
 

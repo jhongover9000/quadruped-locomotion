@@ -17,7 +17,7 @@ from quadruped_rl.algorithms import (
 from quadruped_rl.algorithms.base import Agent, task_kind
 from quadruped_rl.utils.config import available, load_group
 
-IMPLEMENTED = ["ppo", "ppo_rslrl", "supermimic"]
+IMPLEMENTED = ["ppo", "ppo_rslrl", "deepmimic", "supermimic", "amp", "mpc"]
 
 
 # ---- algorithms x tasks -------------------------------------------------------------
@@ -49,18 +49,24 @@ def test_implemented_algorithms_run_on_their_default_task():
 
 
 @pytest.mark.parametrize("algo,task", [("ppo", "motion_tracking"), ("ppo_rslrl", "motion_tracking"),
-                                       ("supermimic", "flat_velocity"), ("supermimic", "rough_velocity")])
+                                       ("supermimic", "flat_velocity"), ("supermimic", "rough_velocity"),
+                                       ("deepmimic", "flat_velocity"), ("amp", "motion_tracking"),
+                                       ("mpc", "motion_tracking")])
 def test_wrong_kind_of_task_is_refused_with_alternatives(algo, task):
     with pytest.raises(IncompatibleError) as e:
         check_compatible(algo, load_group("tasks", task))
     assert "Algorithms for it" in str(e.value)
 
 
-@pytest.mark.parametrize("algo", ["amp", "deepmimic", "mpc"])
-def test_planned_algorithms_refuse_to_train(algo, tmp_path):
-    """A stub must never train silently as something else (AMP used to run plain PPO)."""
+def test_planned_algorithms_refuse_to_train(tmp_path, monkeypatch):
+    """A stub must never train silently as something else (AMP used to run plain PPO).
+    Every registered method is implemented now, so a fake stub stands in for the next one."""
+    import quadruped_rl.algorithms as algorithms
+
+    algo = "planned_stub"
+    monkeypatch.setitem(algorithms._REGISTRY, algo, "quadruped_rl.algorithms.base:NotImplementedAgent")
     with pytest.raises(IncompatibleError, match="not implemented"):
-        check_compatible(algo, load_group("tasks", load_group("algorithms", algo)["default_task"]))
+        check_compatible(algo, load_group("tasks", "flat_velocity"))
     agent = get_algorithm(algo)(robot=None, task_cfg={}, algo_cfg={}, run_dir=tmp_path)
     with pytest.raises(NotImplementedError):
         agent.train()
@@ -104,6 +110,19 @@ def test_checkpoint_from_another_trainer_is_named_in_the_error(tmp_path):
         require_format(rsl, "ppo", tmp_path / "a.pt")
     with pytest.raises(ValueError, match="written by 'ppo'"):
         require_format(ours, "supermimic", tmp_path / "a.pt")
+    # DeepMimic writes PPO's keys plus its own: never mistaken for a velocity PPO checkpoint.
+    dm = {**ours, "deepmimic": {"observations": ["policy", "goal"]}}
+    assert checkpoint_format(dm) == "deepmimic"
+    with pytest.raises(ValueError, match="written by 'ppo'; load it with --algo ppo"):
+        require_format(ours, "deepmimic", tmp_path / "a.pt")
+    with pytest.raises(ValueError, match="written by 'deepmimic'"):
+        require_format(dm, "ppo", tmp_path / "a.pt")
+    amp = {**ours, "discriminator": {}, "disc_optimizer": {}}
+    assert checkpoint_format(amp) == "amp"
+    with pytest.raises(ValueError, match="written by 'amp'"):          # PPO refuses AMP
+        require_format(amp, "ppo", tmp_path / "a.pt")
+    with pytest.raises(ValueError, match="written by 'ppo'"):          # and AMP refuses PPO
+        require_format(ours, "amp", tmp_path / "a.pt")
 
 
 PPO_ALGO = {"steps_per_env": 8, "learning_rate": 1e-3, "num_epochs": 1, "num_minibatches": 1,

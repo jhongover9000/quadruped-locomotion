@@ -1,4 +1,5 @@
 # Non-learning baseline: convex MPC on centroidal dynamics + leg PD / swing control.
+# `train.py --algo mpc` only builds the controller (algorithms/mpc_baseline/controller.py).
 name: mpc
 default_task: flat_velocity
 horizon_steps: 10
@@ -7,10 +8,18 @@ gait:
   type: trot
   period_s: 0.5
   duty_factor: 0.5
-friction_coef: 0.6
+friction_coef: 0.3             # the lowest foot friction of the Go1 domain randomization (robots/go1.yaml)
+max_foot_force_bw: 1.0        # upper bound on each foot's normal force, in body weights
 weights:
   orientation: [1.0, 1.0, 1.0]
-  position: [0.0, 0.0, 50.0]
+  position: [5.0, 5.0, 50.0]
   angular_velocity: [0.0, 0.0, 1.0]
   linear_velocity: [1.0, 1.0, 1.0]
   force_regularization: 1.0e-5
+qp_iterations: 100            # ADMM iterations per solve (fixed: same cost every step)
+swing_height: 0.08            # m, foot clearance at mid-swing
+swing_kp: 0.0                 # N/m, Cartesian feed-forward on swing feet on top of the joint PD
+swing_kd: 0.0                 # N s/m
+max_foothold_offset: 0.15     # m, cap on the Raibert foothold shift from the nominal stance
+max_position_error: 0.1       # m, cap on the distance to the target position (integrated command)
+max_yaw_error: 0.2            # rad, the same for heading

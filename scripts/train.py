@@ -125,7 +125,7 @@ def main() -> None:
         algo_cfg, task_cfg = resolved["algo"], resolved["task"]
         algo_name, seed = algo_cfg["name"], int(resolved.get("seed", 0))
         robot = robot_from_dict(resolved["robot"])
-        target = int(algo_cfg["max_iterations"])
+        target = int(algo_cfg.get("max_iterations", 0))   # MPC has none: nothing to train
         found = get_algorithm(algo_name).resume_checkpoint(run_dir)
         if found:
             resume, done = found
