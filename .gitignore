@@ -123,3 +123,9 @@ desktop.ini
 # Cluster: personal overrides of hpc/config.sh; Windows download markers
 hpc/config.local.sh
 *:Zone.Identifier
+
+# Saved web pages kept for reference only
+prompting_guide/
+
+# Agent worktrees
+.claude/worktrees/

@@ -149,6 +149,50 @@ def build_train_config(robot_name: str, task_cfg: dict, algo_cfg: dict, run_dir:
     return cfg
 
 
+def latest_interval(algo_cfg: dict) -> int:
+    """Iterations between overwrites of ckpt_latest.pt (0: only where the reference saves).
+    Configs written before the key existed get min(save_interval, 100)."""
+    value = algo_cfg.get("latest_interval")
+    if value is None:
+        value = min(int(algo_cfg.get("save_interval", 100)), 100)
+    return max(int(value), 0)
+
+
+def make_trainer(cfg, latest_every: int):
+    """The reference ``Trainer`` with two additions:
+
+    * every checkpoint is written to a temporary file in the run directory and then
+      renamed over the target, so a kill mid-save cannot leave a truncated file;
+    * ckpt_latest.pt is also written every ``latest_every`` iterations, not only at the
+      numbered-checkpoint interval, so a crashed or stalled run loses little progress.
+    """
+    from supermimic.training.loop import Trainer
+
+    class CheckpointingTrainer(Trainer):
+        def __init__(self, cfg):
+            super().__init__(cfg)
+            self.latest_every = latest_every
+            self._latest_at = self.iteration     # a resumed run's state is already on disk
+
+        def save(self, name: str = "ckpt_latest.pt") -> None:
+            tmp = f".{name}.tmp"                 # not matched by the ckpt_*.pt globs
+            super().save(tmp)
+            if self.is_main:
+                os.replace(self.log_dir / tmp, self.log_dir / name)
+            if name == "ckpt_latest.pt":
+                self._latest_at = self.iteration
+
+        def act(self, obs):
+            # run() calls this first in every iteration, after the previous iteration's
+            # updates, logging and checkpoints: the same point the reference saves at.
+            if (self.latest_every and self.iteration % self.latest_every == 0
+                    and self.iteration != self._latest_at):
+                self.save("ckpt_latest.pt")
+            return super().act(obs)
+
+    return CheckpointingTrainer(cfg)
+
+
 def robot_spec_differences(robot, spec, action_cfg: dict | None = None) -> list[str]:
     """Where our robot YAML and the SuperMimic RobotSpec describe different robots.
 

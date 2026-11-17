@@ -62,7 +62,7 @@ Training runs on an NVIDIA GPU under Linux; on Windows, use WSL2 + Ubuntu.
 
 ```bash
 conda create -n mujoco python=3.12 -y && conda activate mujoco
-pip install -e ".[mjlab,dev]"                    # PyTorch (CUDA), MuJoCo Warp, mjlab
+pip install -e ".[mjlab,dev,video,supermimic]"      # PyTorch (CUDA), MuJoCo Warp, mjlab; imageio for videos; SuperMimic deps
 git lfs install                                  # once per machine
 pytest                                           # fast checks, incl. PPO on a toy task
 pytest -m sim                                    # builds the simulated Go1

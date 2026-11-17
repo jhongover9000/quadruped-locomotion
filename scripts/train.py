@@ -119,8 +119,6 @@ def main() -> None:
 
     resume, iterations = args.resume, None
     if args.continue_run is not None:
-        from quadruped_rl.algorithms.checkpoints import checkpoint_number, list_checkpoints
-
         run_dir = args.continue_run.resolve()
         with open(run_dir / "config.yaml", encoding="utf-8") as f:
             resolved = yaml.safe_load(f)
@@ -128,12 +126,12 @@ def main() -> None:
         algo_name, seed = algo_cfg["name"], int(resolved.get("seed", 0))
         robot = robot_from_dict(resolved["robot"])
         target = int(algo_cfg["max_iterations"])
-        ckpts = list_checkpoints(run_dir, get_algorithm(algo_name).checkpoint_patterns)
-        if ckpts:
-            resume = ckpts[-1]
-            iterations = target - checkpoint_number(resume)
+        found = get_algorithm(algo_name).resume_checkpoint(run_dir)
+        if found:
+            resume, done = found
+            iterations = target - done
             if iterations <= 1:
-                print(f"{run_dir} already reached {checkpoint_number(resume)}/{target} iterations.")
+                print(f"{run_dir} already reached {done}/{target} iterations.")
                 write_status(run_dir, get_algorithm(algo_name), target, time.time())
                 plot_curves(run_dir)
                 return

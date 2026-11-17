@@ -28,6 +28,24 @@ class SuperMimicAgent(Agent):
 
     # ---- training -------------------------------------------------------------------
 
+    @classmethod
+    def resume_checkpoint(cls, run_dir: Path) -> tuple[Path, int] | None:
+        """The newest numbered checkpoint, or ckpt_latest.pt when it is further along
+        (it is overwritten every latest_interval iterations, numbered ones far less often)."""
+        found = super().resume_checkpoint(run_dir)
+        latest = Path(run_dir) / "ckpt_latest.pt"
+        if latest.exists():
+            import torch
+
+            try:                                # mmap: reads the iteration, not the weights
+                it = int(torch.load(latest, map_location="cpu", mmap=True, weights_only=False)["iteration"])
+            except Exception as e:  # noqa: BLE001  (an unreadable file must not block a resume)
+                print(f"[supermimic] ignoring unreadable {latest}: {type(e).__name__}: {e}", flush=True)
+            else:
+                if found is None or it > found[1]:
+                    found = (latest, it)
+        return found
+
     def train(self, num_envs: int | None = None, max_iterations: int | None = None,
               resume: Path | None = None) -> None:
         """``max_iterations`` counts from the resume point, like the other trainers."""
@@ -47,11 +65,9 @@ class SuperMimicAgent(Agent):
             del ckpt
         self.warn_robot_differences(cfg.robot)
 
-        from supermimic.training.loop import Trainer
-
         from quadruped_rl.utils import watchdog
 
-        trainer = Trainer(cfg)
+        trainer = backend.make_trainer(cfg, backend.latest_interval(algo))
         watchdog.watch_env(trainer.env)         # every simulated step counts as progress
         print(f"[supermimic] {len(trainer.lib.clips)} clips, {cfg.env.num_envs} envs, "
               f"iterations {trainer.iteration} -> {cfg.schedule.total_iterations}", flush=True)

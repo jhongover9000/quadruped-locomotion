@@ -6,7 +6,7 @@
 SCRATCH_ROOT="${SCRATCH_ROOT:-/scratch/$USER}"
 PROJECT_DIR="${PROJECT_DIR:-$SCRATCH_ROOT/quadruped-locomotion}"       # this repository
 SUPERMIMIC_ROOT="${SUPERMIMIC_ROOT:-$SCRATCH_ROOT/supermimic-quadruped}" # SuperMimic reference repo
-LOG_DIR="${LOG_DIR:-$$PROJECT_DIR/hpc/logs}"                                 # Slurm .out / .err files
+LOG_DIR="${LOG_DIR:-$PROJECT_DIR/hpc/logs}"                                 # Slurm .out / .err files
 export QUADRUPED_OUTPUT_DIR="${QUADRUPED_OUTPUT_DIR:-$PROJECT_DIR/outputs}"
 PIPELINE_DIR="${PIPELINE_DIR:-$QUADRUPED_OUTPUT_DIR/pipelines}"          # one state folder per submission
 

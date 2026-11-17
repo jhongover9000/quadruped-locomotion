@@ -10,6 +10,8 @@ default_task: motion_tracking
 num_envs: 4096
 max_iterations: 50000
 save_interval: 2000           # iterations between numbered checkpoints
+latest_interval: 100          # iterations between overwrites of ckpt_latest.pt (resume point after a
+                              # crash or stall); numbered checkpoints stay at save_interval
 max_hours: null               # stop cleanly after this long (cluster time limits); resume later
 
 backend:

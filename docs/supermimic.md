@@ -56,7 +56,7 @@ Any field of the reference `TrainConfig` can be set from the command line, for e
 
 ## The motion library
 
-520 clips at 50 Hz (dog motion capture from two public sources, retargeted with dynamic
+520 clips at 50 Hz (dog motion capture from three public sources, retargeted with dynamic
 similarity scaling: lengths × 0.74, velocities × 0.86 from the source robot to the Go1).
 Each clip was screened in simulation for whether the Go1 can physically follow it, then
 assigned to a group in `manifest.csv`:
@@ -88,6 +88,6 @@ reference repository's scripts (`scripts/data/`, run by `hpc/30_supermimic_motio
   (stacks of every thread) and `--stall-timeout` restarts the run. Compilation can be
   switched off with `--algo-set policy_trainer.compile=null wm_trainer.compile=null`,
   at about a fifth of the speed.
-* **Adding a robot.** Write its `RobotSpec` in the reference repository (its
-  `docs/PORTING.md`), build and screen a motion library for it, and add the name to
-  `backend.robot_specs` in `configs/algorithms/supermimic.yaml`.
+* **Adding a robot.** Run `scripts/import_robot.py`, which writes the `RobotSpec` and adds the name to
+  `backend.robot_specs` in `configs/algorithms/supermimic.yaml` ([robot_import.md](robot_import.md)),
+  then build and screen a motion library for it.

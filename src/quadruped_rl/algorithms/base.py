@@ -35,6 +35,14 @@ class Agent:
         self.device = device
         self.seed = seed
 
+    @classmethod
+    def resume_checkpoint(cls, run_dir: Path) -> tuple[Path, int] | None:
+        """The checkpoint ``--continue-run`` resumes from and its iteration (None: none yet)."""
+        from quadruped_rl.algorithms.checkpoints import checkpoint_number, list_checkpoints
+
+        ckpts = list_checkpoints(run_dir, cls.checkpoint_patterns)
+        return (ckpts[-1], checkpoint_number(ckpts[-1])) if ckpts else None
+
     def make_env(self, num_envs: int, play: bool = False, seed: int | None = None):
         """The environment for this method's task (velocity tasks: envs/builder.py)."""
         from quadruped_rl.envs.builder import make_env
