@@ -108,10 +108,22 @@ Other options (`--help` lists all):
 | `--knees front` | Knees bend forwards in the default stance. |
 | `--foot-links A B C D` | The feet are not found by name (`foot`, `toe`, `paw`). |
 | `--foot-radius R` | The URDF feet are not spheres. |
+| `--joint-range KIND LOWER UPPER` | Replace the URDF's range of every `hip`, `thigh` or `calf` joint (repeatable). See below. |
 | `--torque-limit`, `--velocity-limit`, `--armature` | Override the URDF or the measurements. |
 | `--mesh-dir DIR` | Meshes are not near the URDF. |
 | `--no-supermimic` | Only the PPO side. |
 | `--force` | Replace an existing `configs/robots/<name>.yaml` (hand edits are lost). |
+
+`--joint-range` takes URDF radians and applies one range to all four legs of that kind, so
+it suits URDFs whose legs share one joint convention (same zero and direction on every leg).
+The use case is a `continuous` knee, which has no range at all: in simulation the calf
+could then turn a full circle. The range is applied before the URDF is compiled, and the
+report and the config's header comment record it. Pass it again whenever you re-import.
+
+Feet: the importer gives each foot one collision sphere at the foot link. A collision mesh
+on the calf (or on the foot link) whose vertices all lie within two foot radii of the foot
+centre is taken to be the foot and dropped in favour of that sphere; the report lists each
+one. Any other collision mesh is replaced by its bounding box.
 
 Nothing is written unless the rebuilt model reproduces the URDF: at 20 random poses the
 foot positions and centre of mass must agree to a micrometre, and the mass exactly.

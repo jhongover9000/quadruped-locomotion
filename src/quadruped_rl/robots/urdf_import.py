@@ -104,6 +104,7 @@ class ImportedRobot:
     warnings: list[str] = field(default_factory=list)
     retarget_problems: list[str] = field(default_factory=list)
     source: dict = field(default_factory=dict)  # compiled URDF model + bookkeeping for checks
+    range_overrides: list[str] = field(default_factory=list)  # joint ranges set by the caller, not the URDF
 
     @property
     def bodies(self) -> list[Body]:
@@ -177,7 +178,55 @@ def _copy_mesh(src: Path, dst: Path) -> bool:
     return True
 
 
-def _prepare_urdf(urdf: Path, mesh_dirs: list[Path], mesh_out: Path, warnings: list[str]):
+def _set_joint_ranges(root: ET.Element, joint_ranges: dict[str, tuple[float, float]]) -> list[str]:
+    """Give every joint of a kind (hip, thigh, calf: the 1st, 2nd, 3rd moving joint below the
+    root link) the range ``(lower, upper)`` in URDF radians, before MuJoCo compiles it. A
+    continuous joint becomes revolute. Returns one line per kind, saying what was changed."""
+    for kind, (lo, hi) in joint_ranges.items():
+        if kind not in PARTS:
+            raise ImportError_(f"--joint-range: kind '{kind}' is not one of {PARTS}")
+        if not lo < hi:
+            raise ImportError_(f"--joint-range {kind}: lower {lo} is not below upper {hi}")
+    moving = {"revolute", "continuous", "prismatic"}
+    parent_joint = {j.find("child").get("link"): j for j in root.iter("joint") if j.find("child") is not None}
+
+    def depth(j: ET.Element) -> int:
+        n, link, seen = 1, j.find("parent").get("link"), set()
+        while link in parent_joint and link not in seen:      # (a cycle is MuJoCo's to reject)
+            seen.add(link)
+            up = parent_joint[link]
+            n += up.get("type") in moving
+            link = up.find("parent").get("link")
+        return n
+
+    by_kind: dict[str, list[ET.Element]] = {}
+    for j in root.iter("joint"):
+        if j.get("type") in moving and j.find("parent") is not None:
+            d = depth(j)
+            if 1 <= d <= len(PARTS):
+                by_kind.setdefault(PARTS[d - 1], []).append(j)
+    notes = []
+    for kind, (lo, hi) in joint_ranges.items():
+        joints = by_kind.get(kind)
+        if not joints:
+            raise ImportError_(f"--joint-range {kind}: the URDF has no {kind} joints")
+        was = set()
+        for j in joints:
+            lim = j.find("limit")
+            if lim is None:
+                lim = ET.SubElement(j, "limit")
+            was.add("continuous" if j.get("type") == "continuous"
+                    else f"[{lim.get('lower', '?')}, {lim.get('upper', '?')}]")
+            j.set("type", "revolute")
+            lim.set("lower", repr(float(lo)))
+            lim.set("upper", repr(float(hi)))
+        notes.append(f"{kind} joints ({', '.join(j.get('name') for j in joints)}): range set to "
+                     f"[{lo:.5g}, {hi:.5g}] rad in URDF angles by --joint-range (URDF: {', '.join(sorted(was))})")
+    return notes
+
+
+def _prepare_urdf(urdf: Path, mesh_dirs: list[Path], mesh_out: Path, warnings: list[str],
+                  joint_ranges: dict[str, tuple[float, float]] | None = None):
     """Copy the meshes next to the model and write a URDF MuJoCo can compile as given:
     plain mesh file names, every link kept as its own body, visual geometry kept."""
     tree = ET.parse(urdf)
@@ -185,6 +234,7 @@ def _prepare_urdf(urdf: Path, mesh_dirs: list[Path], mesh_out: Path, warnings: l
     if root.tag != "robot":
         raise ImportError_(f"{urdf}: not a URDF (root element is <{root.tag}>, expected <robot>). "
                            "Convert xacro first:  xacro robot.urdf.xacro > robot.urdf")
+    range_notes = _set_joint_ranges(root, joint_ranges) if joint_ranges else []
     for old in root.findall("mujoco"):
         root.remove(old)
     mesh_out.mkdir(parents=True, exist_ok=True)
@@ -219,7 +269,7 @@ def _prepare_urdf(urdf: Path, mesh_dirs: list[Path], mesh_out: Path, warnings: l
         lim = j.find("limit")
         if lim is not None:
             limits[j.get("name")] = (float(lim.get("effort", 0) or 0), float(lim.get("velocity", 0) or 0))
-    return ET.tostring(root, encoding="unicode"), limits
+    return ET.tostring(root, encoding="unicode"), limits, range_notes
 
 
 def _name(model, kind, i) -> str:
@@ -241,15 +291,19 @@ def _wrap(a: float) -> float:
 # ---- the import -------------------------------------------------------------------
 
 def import_urdf(urdf: Path, name: str, mesh_out: Path, *, mesh_dirs: list[Path] | None = None,
-                foot_links: list[str] | None = None, foot_radius: float | None = None) -> ImportedRobot:
+                foot_links: list[str] | None = None, foot_radius: float | None = None,
+                joint_ranges: dict[str, tuple[float, float]] | None = None) -> ImportedRobot:
     """Compile the URDF and rebuild it in the project's convention (see module docstring).
 
     ``foot_links``: the four URDF links at the feet, any order; found by name (foot / toe)
     when omitted. ``foot_radius``: needed when the URDF's feet have no sphere collision.
+    ``joint_ranges``: {hip|thigh|calf: (lower, upper)} in URDF radians, replacing the URDF's
+    range for every joint of that kind (e.g. a continuous knee) before it is compiled.
     """
     urdf = Path(urdf).resolve()
     warnings: list[str] = []
-    text, urdf_limits = _prepare_urdf(urdf, [Path(d) for d in (mesh_dirs or [])], Path(mesh_out), warnings)
+    text, urdf_limits, range_notes = _prepare_urdf(urdf, [Path(d) for d in (mesh_dirs or [])], Path(mesh_out),
+                                                   warnings, joint_ranges)
     try:
         spec = mujoco.MjSpec.from_string(text)
         model = spec.compile()
@@ -453,6 +507,22 @@ def import_urdf(urdf: Path, name: str, mesh_out: Path, *, mesh_dirs: list[Path] 
             tensor += R @ np.diag(model.body_inertia[b]) @ R.T + model.body_mass[b] * (d @ d * np.eye(3) - np.outer(d, d))
         return Inertia(m, np.array(com), tensor)
 
+    # A collision mesh at a foot (on the calf or the foot link welded to it, every vertex within
+    # two foot radii of the foot centre) is the foot: the writer's sphere replaces it.
+    foot_meshes = set()
+    for leg, chain in labelled.items():
+        for g in range(model.ngeom):
+            if not (is_collision(g) and model.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH
+                    and mover[int(model.geom_bodyid[g])] == chain[2]):
+                continue
+            mid = int(model.geom_dataid[g])
+            v = model.mesh_vert[model.mesh_vertadr[mid]:model.mesh_vertadr[mid] + model.mesh_vertnum[mid]]
+            world_v = data.geom_xpos[g] + v @ data.geom_xmat[g].reshape(3, 3).T
+            if np.linalg.norm(world_v - foot_point(leg), axis=1).max() <= 2 * radius:
+                foot_meshes.add(g)
+                warnings.append(f"link '{_name(model, B, int(model.geom_bodyid[g]))}': collision mesh at the "
+                                f"foot replaced by the foot sphere (r {radius:.3f} m)")
+
     kind_name = {int(mujoco.mjtGeom.mjGEOM_SPHERE): "sphere", int(mujoco.mjtGeom.mjGEOM_CAPSULE): "capsule",
                  int(mujoco.mjtGeom.mjGEOM_CYLINDER): "cylinder", int(mujoco.mjtGeom.mjGEOM_BOX): "box",
                  int(mujoco.mjtGeom.mjGEOM_MESH): "mesh"}
@@ -464,7 +534,7 @@ def import_urdf(urdf: Path, name: str, mesh_out: Path, *, mesh_dirs: list[Path] 
             if mover[b] != body if b else True:
                 continue
             col = is_collision(g)
-            if col and (b in skip_bodies or g in foot_geom.values()):
+            if col and (b in skip_bodies or g in foot_geom.values() or g in foot_meshes):
                 continue                          # the foot gets one sphere, added by the writer
             kind = kind_name.get(int(model.geom_type[g]))
             if kind is None:
@@ -523,7 +593,8 @@ def import_urdf(urdf: Path, name: str, mesh_out: Path, *, mesh_dirs: list[Path] 
         meshes=meshes, imu_pos=data.xpos[imu[0]].copy() if imu else np.zeros(3),
         warnings=warnings, retarget_problems=retarget_problems,
         source={"model": model, "q_straight": q_straight, "joint_of": joint_of, "labelled": labelled,
-                "urdf": str(urdf), "foot_point": {leg: foot_point(leg) for leg in LEGS}})
+                "urdf": str(urdf), "foot_point": {leg: foot_point(leg) for leg in LEGS}},
+        range_overrides=range_notes)
     _name_collisions(robot)
     undrawn = [b for b in robot.bodies if not any(not g.collision for g in b.geoms)]
     for b in undrawn:

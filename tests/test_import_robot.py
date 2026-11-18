@@ -4,6 +4,7 @@ are not in one plane, feet on fixed links, a mesh behind a package:// path."""
 
 import importlib.util
 import math
+import re
 from pathlib import Path
 
 import mujoco
@@ -225,6 +226,83 @@ def test_unsupported_urdfs_say_why(tmp_path):
         ui.import_urdf(write_urdf(tmp_path / "b", feet=False), "x", tmp_path / "m")
     with pytest.raises(ui.ImportError_, match="no such link"):
         ui.import_urdf(write_urdf(tmp_path / "c"), "x", tmp_path / "m", foot_links=["a", "b", "c", "d"])
+
+
+def test_joint_range_option(tmp_path):
+    """--joint-range gives a joint kind a range before compiling: here continuous knees."""
+    urdf = write_urdf(tmp_path / "src")
+    def continuous(knee: re.Match) -> str:              # no range, as a CAD export of a knee
+        return knee.group(0).replace('type="revolute"', 'type="continuous"').replace('lower="-3" upper="3" ', "")
+
+    urdf.write_text(re.sub(r'<joint name="\w+_kfe".*?</joint>', continuous, urdf.read_text(), flags=re.DOTALL))
+    plain = ui.import_urdf(urdf, "awkward", tmp_path / "m1")
+    assert not plain.joints["FL_calf_joint"].limited and plain.range_overrides == []
+    assert any("'lf_kfe' has no limits" in w for w in plain.warnings)
+
+    robot = ui.import_urdf(urdf, "awkward", tmp_path / "m2", joint_ranges={"calf": (-2.5, 0.5)})
+    assert ui.verify_against_urdf(robot, tmp_path / "m2") < 1e-9
+    for leg in ui.LEGS:
+        j = robot.joints[f"{leg}_calf_joint"]
+        assert j.limited and j.range == pytest.approx(sorted(j.sign * (r - j.offset) for r in (-2.5, 0.5)))
+        for part in ("hip", "thigh"):
+            assert robot.joints[f"{leg}_{part}_joint"].range == plain.joints[f"{leg}_{part}_joint"].range
+    assert robot.joints["FL_calf_joint"].range == pytest.approx((-3.4, -0.4))      # offset 0.9, sign +1
+    assert not any("no limits" in w for w in robot.warnings)
+    assert len(robot.range_overrides) == 1
+    note = robot.range_overrides[0]
+    assert note.startswith("calf joints") and "lf_kfe" in note and "rh_kfe" in note and "continuous" in note
+
+    spec = importlib.util.spec_from_file_location("import_robot", REPO / "scripts" / "import_robot.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    assert cli.parse_joint_ranges([["calf", "-2.5", "0.5"]]) == {"calf": (-2.5, 0.5)}
+    assert cli.parse_joint_ranges([]) is None
+    with pytest.raises(ui.ImportError_, match="given twice"):
+        cli.parse_joint_ranges([["calf", "0", "1"], ["calf", "0", "2"]])
+    q0 = [0.0] * 12          # only written out here (the URDF's legs differ, so the calf ranges do too)
+    args = cli.argparse.Namespace(kp=[30, 30, 30], kd=[1, 1, 1], armature=None, torque_limit=None,
+                                  velocity_limit=None, natural_frequency=10.0, damping_ratio=2.0)
+    act, notes = cli.resolve_actuator(robot, args)
+    text = cli.robot_yaml(robot, act, q0, 0.3, "assets/robots/awkward/mjcf/awkward.xml", {}, "awkward.urdf")
+    assert f"#   {note}" in text                                   # a comment in the config ...
+    robot_from_dict(yaml.safe_load(text))                          # ... that still loads
+    drop = {"self_collisions": [], "stands": True, "height_start": 0.3, "height_end": 0.3, "tilt_deg": 0.0,
+            "joint_sag_rad": 0.0, "hold_torque_fraction": 0.1}
+    report = cli.report_md(robot, act, q0, 0.3, {"actuator": notes, "measurements": []}, drop, 0.0)
+    assert f"- {note}" in report
+
+    with pytest.raises(ui.ImportError_, match="not one of"):
+        ui.import_urdf(urdf, "awkward", tmp_path / "m3", joint_ranges={"knee": (0.0, 1.0)})
+    with pytest.raises(ui.ImportError_, match="not below"):
+        ui.import_urdf(urdf, "awkward", tmp_path / "m3", joint_ranges={"calf": (1.0, 0.0)})
+
+
+def test_collision_mesh_at_the_foot_becomes_the_foot_sphere(tmp_path):
+    """A collision mesh at a foot is dropped for the foot sphere; one elsewhere still becomes a box."""
+    urdf = write_urdf(tmp_path / "src")
+    meshes = tmp_path / "src" / "meshes"
+    _stl_box(meshes / "foot_col.stl", (0.0, 0.0, 0.0), (0.015, 0.015, 0.015))   # corners 26 mm < 2 x 20 mm
+    _stl_box(meshes / "thigh_col.stl", (0.0, 0.0, -0.1), (0.015, 0.015, 0.08))
+    mesh = '<collision><origin xyz="{}"/><geometry><mesh filename="package://awkward_description/meshes/{}"/></geometry></collision></link>'
+    text = re.sub(r'(<link name="\w+_calf">.*?)</link>', lambda m: m.group(1) + mesh.format(f"0 0 {-CALF}", "foot_col.stl"),
+                  urdf.read_text(), flags=re.DOTALL)
+    text = re.sub(r'(<link name="\w+_thigh">.*?)</link>', lambda m: m.group(1) + mesh.format("0 0 0", "thigh_col.stl"),
+                  text, flags=re.DOTALL)
+    urdf.write_text(text)
+    robot = ui.import_urdf(urdf, "awkward", tmp_path / "out")
+    assert ui.verify_against_urdf(robot, tmp_path / "out") < 1e-9
+    foot_lines = [w for w in robot.warnings if "collision mesh at the foot replaced by the foot sphere (r 0.020 m)" in w]
+    box_lines = [w for w in robot.warnings if "mesh collision replaced by its bounding box" in w]
+    assert len(foot_lines) == 4 and all("_calf'" in w for w in foot_lines)
+    assert len(box_lines) == 4 and all("_thigh'" in w for w in box_lines)
+    m = ui.compile_mjcf(robot, tmp_path / "out")
+    for leg in ui.LEGS:
+        assert [g.kind for g in robot.legs[leg]["calf"].geoms if g.collision] == ["cylinder"]
+        assert sorted(g.kind for g in robot.legs[leg]["thigh"].geoms if g.collision) == ["box", "box"]
+        calf = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"{leg}_calf")
+        cols = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) for g in range(m.ngeom)
+                if m.geom_bodyid[g] == calf and m.geom_contype[g]]
+        assert sorted(cols) == sorted([f"{leg}_calf_collision", f"{leg}_foot_collision"])
 
 
 def test_supermimic_files_follow_the_config(imported, tmp_path):

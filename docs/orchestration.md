@@ -58,6 +58,52 @@ Still open:
 
 ## Work in flight
 
+### Astra import, from 2026-11-18 10:35
+
+Joseph delivered the team robot's URDF and meshes on 11-18 (`quadruped-model/`, robot
+"Astra": 12 joints, CAD mass about 17 kg, 30 N m and 20 rad/s on every joint). Gains,
+measurements, motors and gear ratios are still to come. To find importer and model problems
+early, an implementer is importing it with provisional gains (kp 25/25/40, kd 1.0/1.0/1.6)
+on branch `astra-import`, without the SuperMimic side. It also moves the files to
+`assets/robots/custom/`, works out a knee range from the collision geometry (the URDF's
+knee is `continuous`) and a foot radius from the foot mesh. Logs in `outputs/debug/astra/`.
+Anything trained on this import is throwaway: the real gains and masses change the model.
+
+First pass done 11:00: the files moved and are staged in Git LFS; `--joint-range` was added
+to the importer (diff reviewed, accepted); the joint map and leg labels are right; `pytest -q`
+110 passed. Found:
+- (a) The foot meshes became bounding boxes 14 mm below the foot spheres, so the robot
+  stood on boxes that count as undesired contacts.
+- (b) kp 25/25/40 is too soft: the rear legs folded to the floor. Each foot sits 0.151 m
+  outboard of its hip abduction axis, so standing loads the hips with about 6 N m.
+- (c) The geometry never blocks the knee, so its range has to come from the team.
+
+Fix round done 12:10, CPU only, not committed:
+- Importer change: a collision mesh on the calf whose vertices all lie within 2 foot radii
+  of the foot is dropped, and the foot sphere is used instead. The report lists each one, and
+  a test covers it.
+- Re-imported with `--kp 50 50 80 --kd 2.0 2.0 3.2 --stance 0.7854 -1.5708 --foot-radius 0.035
+  --joint-range calf 0.3927 2.9671 --mesh-dir assets/robots/custom/meshes --no-supermimic`.
+- Standing: trunk 0.389 -> 0.351 m, tilt 2.1 deg, sag 0.129 rad, holding torque up to 34% of
+  the limit. The foot spheres are the lowest geoms and nothing touches at spawn.
+- `record.py --scenario stand` (`outputs/debug/astra/stand2`): 0 falls. The video was checked
+  and the pose holds.
+- The 5-iteration PPO smoke runs on the CPU.
+- `pytest -q` 111 passed; `-m sim` 7 passed.
+- The duplicate `torso` geom name comes from MuJoCo's URDF parser. It is harmless, because
+  the importer renames every geom.
+- Adversarial review: nothing medium or above. It was a Claude reviewer, because no Codex or
+  Gemini CLI is installed.
+
+Still open:
+- A GPU PPO smoke, after a WSL restart.
+- Each recording's `model.mjb.gz` is 77 MB because the visual meshes have 893k faces.
+  Consider decimating them at import.
+
+At 11:10 a stray PPO test process was stuck in D state, about 70 threads, load average 72.
+`ps` and `pgrep` hang on it, and nothing but `wsl --shutdown` clears it. Restart WSL now
+that the fix round has reported.
+
 ### Session `ac9d5b2f`, from 2026-11-16 22:56 EST
 
 Joseph restarted WSL at about 22:55. At 22:56 (uptime 1 minute): `nvidia-smi` reports the
@@ -300,12 +346,43 @@ submission, module and conda paths, and EGL rendering on compute nodes.
 
 ### Phase 2: the team's robot in simulation (real2sim)
 
-The importer is finished and was exercised on a deliberately awkward synthetic robot
-(`testdog`). It has not seen the real URDF. `assets/robots/custom/` is empty.
+The team robot is **Astra**. URDF and meshes arrived 11-18 (`quadruped-model/`, moving to
+`assets/robots/custom/`). What the URDF says, from the main session's reading:
 
-- [ ] **P2.1 Import the URDF.** Blocked by decision 3.
-  `python scripts/import_robot.py robot.urdf --name <name> --kp ... --kd ...`, then read
-  `assets/robots/<name>/import_report.md`. Guide: `docs/robot_import.md`.
+- 12 joints `<leg>_j1` (hip abduction), `_j2` (hip pitch), `_j3` (knee); leg order in the
+  file FR, FL, RL, RR. Team convention (`assets/robots/custom/urdf/README.md`): all zero is
+  lying down; standing is j1 0, j2 45 deg, j3 90 deg, which puts each foot about 0.354 m
+  straight below its hip pitch axis, knees behind the hips (Go1-like).
+- Limits: j1 ±26 deg, j2 0 to 90 deg (±45 deg around the stance), j3 `continuous` with no
+  range. 30 N m and 20 rad/s on every joint.
+- CAD mass 17.0 kg: trunk 6.6, per leg 2.6 (hip 1.0, thigh 1.31, calf 0.29). Standing
+  needs about 7.4 N m at each knee and almost nothing at the hip pitch.
+- Hip pitch axes are 0.525 m apart front to back and 0.383 m side to side; each hip link
+  reaches 0.167 m forward (rear: backward) from the abduction motor.
+- Feet: a convex collision mesh on each calf; the foot links have no geometry.
+- Joint dry friction 0.2 N m on j1 and j2, 2.0 N m on j3; no damping, no armature.
+
+Questions for the team (the first three block a real import):
+
+1. The gains the moteus controllers will run (kp, kd per joint).
+2. Motors, gear ratios and rotor inertia (armature), and whether there is an output-side
+   encoder (zeroing at power-on, `docs/robot_requirements.md` section 4).
+3. The knee's physical range (the URDF has none). The provisional import derives one from
+   the collision shapes.
+4. Is the 30 N m a peak or a continuous rating, and at what current limit?
+5. Is the knee's 2.0 N m dry friction measured or estimated? It is ten times the others
+   and matters for the swing.
+6. Does the trunk's 6.6 kg include battery, Pi, controllers and wiring? A scale reading of
+   the assembled robot settles it.
+7. Can j2 go past 90 deg or below 0 if needed? ±45 deg around the stance is enough for
+   walking but tight for recovering from falls.
+
+- [ ] **P2.1 Import the URDF.** Provisional import done on the CPU (see Work in flight). It
+  uses placeholder gains of kp 50/50/80, a placeholder knee range of 0.3927 to 2.9671 rad,
+  and has no SuperMimic side. The real import needs questions 1 to 3 answered. Rerun the
+  provisional command with the real `--kp`, `--kd` and `--joint-range`, then read
+  `assets/robots/astra/import_report.md`.
+  Guide: `docs/robot_import.md`.
 - [ ] **P2.2 Take the measurements** in `docs/measurement_protocol.md` (mass, centre of
   mass, tilt test, pendulum swings) and store them under `data/sysid/`. Bench work for
   the team; `data/` is empty today.

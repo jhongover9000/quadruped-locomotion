@@ -57,6 +57,19 @@ def _expand(values: list[float] | None) -> list[float] | None:
     return None if values is None else ui._per_joint(values, "option")
 
 
+def parse_joint_ranges(items: list[list[str]]) -> dict[str, tuple[float, float]] | None:
+    """--joint-range KIND LOWER UPPER (repeatable) -> {kind: (lower, upper)}."""
+    out = {}
+    for kind, lo, hi in items or []:
+        if kind in out:
+            raise ui.ImportError_(f"--joint-range {kind} given twice")
+        try:
+            out[kind] = (float(lo), float(hi))
+        except ValueError:
+            raise ui.ImportError_(f"--joint-range {kind} {lo} {hi}: LOWER and UPPER must be numbers (rad)") from None
+    return out or None
+
+
 def resolve_actuator(robot: ui.ImportedRobot, args) -> tuple[dict, list[str]]:
     """PD gains and limits per joint, and where each number came from."""
     joints = [robot.joints[j] for j in ui.JOINT_NAMES]
@@ -114,10 +127,13 @@ def robot_yaml(robot: ui.ImportedRobot, act: dict, q0: list[float], height: floa
     def opt(values):
         return "null" if values is None else _fmt(_triple(values))
 
+    overrides = "".join(f"\n#   {n}" for n in robot.range_overrides)
+    if overrides:
+        overrides = "\n# Joint ranges set at import, not taken from the URDF:" + overrides
     return f"""# {robot.name}: imported from {source} by scripts/import_robot.py on {datetime.date.today().isoformat()}.
 # Edit numbers here as measurements improve, then run
 #   python scripts/import_robot.py --sync {robot.name}
-# so the SuperMimic side follows. Report: {Path(model_path).parent.parent}/import_report.md
+# so the SuperMimic side follows. Report: {Path(model_path).parent.parent}/import_report.md{overrides}
 name: {robot.name}
 model_path: {model_path}
 
@@ -201,6 +217,9 @@ def report_md(robot: ui.ImportedRobot, act: dict, q0, height, notes: dict, drop:
     for j, q in zip(joints, q0):
         lines.append(f"| {j.name} | {j.urdf_name} | {j.sign:+.0f} | {j.offset:+.4f} | "
                      f"{j.range[0]:+.3f} .. {j.range[1]:+.3f} | {q:+.3f} | {j.offset + j.sign * q:+.3f} |")
+    if robot.range_overrides:
+        lines += ["", "Joint ranges set at import, not taken from the URDF:", ""]
+        lines += [f"- {n}" for n in robot.range_overrides]
     lines += ["", "## Mass", "", "| Body | mass (kg) | COM in the trunk frame, legs straight down (m) | URDF links merged |", "|---|---|---|---|"]
     for b in robot.bodies:
         lines.append(f"| {b.name} | {b.inertia.mass:.4f} | {np.round(b.inertia.com, 4).tolist()} | {', '.join(b.urdf_links)} |")
@@ -269,6 +288,9 @@ def main() -> None:
                    help="folder to search for the URDF's meshes (repeatable; default: around the URDF)")
     p.add_argument("--foot-links", nargs=4, metavar="LINK", help="the four URDF links at the feet (default: found by name)")
     p.add_argument("--foot-radius", type=float, help="m; needed when the URDF feet are not spheres")
+    p.add_argument("--joint-range", nargs=3, action="append", default=[], metavar=("KIND", "LOWER", "UPPER"),
+                   help="replace the URDF's range of every hip, thigh or calf joint (KIND) with LOWER..UPPER, "
+                        "URDF radians, the same numbers on all four legs; e.g. for a continuous knee (repeatable)")
     p.add_argument("--stance", nargs=2, type=float, metavar=("THIGH", "CALF"),
                    help="standing pose in this project's convention, rad (default: feet under the hips "
                         "at --stance-height of the leg length)")
@@ -319,7 +341,8 @@ def run_import(args) -> None:
         meas = yaml.safe_load(args.measurements.read_text()) or {}
 
     robot = ui.import_urdf(args.urdf, name, mesh_dir, mesh_dirs=args.mesh_dir,
-                           foot_links=args.foot_links, foot_radius=args.foot_radius)
+                           foot_links=args.foot_links, foot_radius=args.foot_radius,
+                           joint_ranges=parse_joint_ranges(args.joint_range))
     error = ui.verify_against_urdf(robot, mesh_dir)
     if error > 1e-6:
         raise ui.ImportError_(f"internal check failed: the rebuilt model differs from the URDF by {error:.2e} "
