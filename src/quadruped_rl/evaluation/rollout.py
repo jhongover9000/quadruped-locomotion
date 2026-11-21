@@ -187,6 +187,7 @@ def record_rollout(run: LoadedRun, schedule: list[Segment] | None, duration_s: f
     after the t-th env.step(), so after a fall ``qpos`` already shows the reset robot and
     ``fell[t]`` marks it.
     """
+    import mujoco
     import torch
 
     if run.kind == "tracking":
@@ -202,11 +203,21 @@ def record_rollout(run: LoadedRun, schedule: list[Segment] | None, duration_s: f
     robot = env.scene["robot"]
     site_ids = [robot.site_names.index(s) for s in robot_cfg.foot_sites]
     has_contacts = "feet_contact" in env.scene.sensors
+    # foot_pos_w: lowest point of each foot collision geom (sphere centre minus radius in z;
+    # other geom types: their centre), for swing clearance in the summary.
+    geom_ids = [robot.geom_names.index(g) for g in robot_cfg.foot_geoms]
+    mj_model = env.sim.mj_model
+    foot_radius = torch.zeros(len(geom_ids), 3, device=env.device)
+    for i, g in enumerate(geom_ids):
+        gid = int(robot.indexing.geom_ids[g])
+        if mj_model.geom_type[gid] == mujoco.mjtGeom.mjGEOM_SPHERE:
+            foot_radius[i, 2] = float(mj_model.geom_size[gid, 0])
 
     seg_end = np.cumsum([s.duration_s for s in schedule]) if schedule else None
     log: dict[str, list] = {k: [] for k in (
         "qpos", "qvel", "command", "base_lin_vel_b", "base_ang_vel_b", "joint_pos", "joint_vel",
-        "actions", "torques", "foot_vel_w", "foot_contact", "reward", "fell", "timeout", "segment")}
+        "actions", "torques", "foot_vel_w", "foot_pos_w", "foot_contact", "foot_force_w",
+        "reward", "fell", "timeout", "segment")}
 
     obs_env = run.viewer_env
     run.env.reset()
@@ -234,9 +245,14 @@ def record_rollout(run: LoadedRun, schedule: list[Segment] | None, duration_s: f
                 "joint_pos": robot.data.joint_pos, "joint_vel": robot.data.joint_vel,
                 "actions": actions, "torques": robot.data.actuator_force,
                 "foot_vel_w": robot.data.site_lin_vel_w[:, site_ids],
+                "foot_pos_w": robot.data.geom_pos_w[:, geom_ids] - foot_radius,
                 "foot_contact": (env.scene["feet_contact"].data.found > 0 if has_contacts else
                                  torch.zeros(env.num_envs, len(site_ids), dtype=torch.bool,
                                              device=env.device)),
+                # Net contact force on each foot, world frame, in the feet_contact sensor's
+                # foot order (the same order as foot_contact); zeros without the sensor.
+                "foot_force_w": (env.scene["feet_contact"].data.force if has_contacts else
+                                 torch.zeros(env.num_envs, len(site_ids), 3, device=env.device)),
                 "reward": env.reward_buf, "fell": env.reset_terminated,
                 "timeout": env.reset_time_outs,
                 "segment": torch.full((env.num_envs,), seg, device=env.device),

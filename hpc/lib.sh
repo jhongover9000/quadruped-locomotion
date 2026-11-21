@@ -88,7 +88,8 @@ train_run() {
   local run_dir="$1"; shift
   local attempt=0 rc=0
   local stall=()
-  [[ "${STALL_TIMEOUT_S:-0}" != "0" ]] && stall=(--stall-timeout "$STALL_TIMEOUT_S")
+  # QUADRUPED_NO_TIMEOUT=1 (runs watched by hand): never pass a stall timeout.
+  [[ "${STALL_TIMEOUT_S:-0}" != "0" && "${QUADRUPED_NO_TIMEOUT:-0}" != "1" ]] && stall=(--stall-timeout "$STALL_TIMEOUT_S")
   while true; do
     rc=0
     if [[ -f "$run_dir/config.yaml" ]]; then

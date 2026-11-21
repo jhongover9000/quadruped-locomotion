@@ -107,9 +107,13 @@ def resolve_actuator(robot: ui.ImportedRobot, args) -> tuple[dict, list[str]]:
                      "armature, under joint: in the measurements file")
     friction = [j.frictionloss for j in joints]
     damping = [j.damping for j in joints]
+    continuous = _expand(getattr(args, "continuous_torque", None))
+    if continuous:
+        notes.append("continuous torque: --continuous-torque")
     return ({"kp": kp, "kd": kd, "torque_limit": torque, "velocity_limit": velocity, "armature": armature,
              "frictionloss": friction if any(friction) else None,
-             "viscous_damping": damping if any(damping) else None}, notes)
+             "viscous_damping": damping if any(damping) else None,
+             "continuous_torque": continuous}, notes)
 
 
 def robot_yaml(robot: ui.ImportedRobot, act: dict, q0: list[float], height: float, model_path: str,
@@ -164,6 +168,7 @@ actuator:
   armature: {_fmt(_triple(act["armature"]))}  # kg*m^2, reflected rotor inertia N^2 * I_rotor
   frictionloss: {opt(act["frictionloss"])}                  # N*m per joint (null keeps the model's value)
   viscous_damping: {opt(act["viscous_damping"])}               # N*m*s/rad per joint
+  continuous_torque: {opt(act.get("continuous_torque"))}             # N*m per joint held continuously (thermal); null: unknown
   params: {{}}
 
 # Ranges for per-environment randomization: what the measurements leave uncertain.
@@ -304,6 +309,9 @@ def main() -> None:
     p.add_argument("--torque-limit", nargs="+", type=float, help="N m (default: URDF <limit effort>)")
     p.add_argument("--velocity-limit", nargs="+", type=float, help="rad/s (default: URDF <limit velocity>)")
     p.add_argument("--armature", nargs="+", type=float, help="kg m^2 (default: measurements file, else 0)")
+    p.add_argument("--continuous-torque", nargs="+", type=float,
+                   help="N m each joint can hold continuously (thermal rating), only reported against "
+                        "(default: kept from the existing config on a re-import, else unknown)")
     p.add_argument("--measurements", type=Path, help="YAML of bench measurements that replace CAD values")
     p.add_argument("--out-dir", type=Path, help="default: assets/robots/<name>")
     p.add_argument("--supermimic-root", help="SuperMimic repository (default: $SUPERMIMIC_ROOT, ../supermimic-quadruped)")
@@ -354,6 +362,12 @@ def run_import(args) -> None:
     if meas.get("com") is not None:
         notes["measurements"].append(ui.match_com(robot, mesh_dir, q0, list(meas["com"])))
     act, notes["actuator"] = resolve_actuator(robot, args)
+    if act["continuous_torque"] is None and cfg_path.exists():      # a re-import keeps the rating
+        old = (yaml.safe_load(cfg_path.read_text()) or {}).get("actuator") or {}
+        kept = old.get("continuous_torque")
+        if kept is not None:
+            act["continuous_torque"] = _expand([kept] * 3 if isinstance(kept, (int, float)) else kept)
+            notes["actuator"].append(f"continuous torque: kept from the previous {cfg_path.name}")
     for jn, a, f, d in zip(ui.JOINT_NAMES, act["armature"], act["frictionloss"] or [0] * 12,
                            act["viscous_damping"] or [0] * 12):
         robot.joints[jn].armature, robot.joints[jn].frictionloss, robot.joints[jn].damping = a, f, d

@@ -47,11 +47,32 @@ rewards:                      # term -> weight; terms live in envs/rewards.py. 0
   feet_air_time: 1.0
   undesired_contacts: -1.0
   base_height: 0.0            # enable with a negative weight and reward_params.base_height_target
+  # Gait shaping, off by default (presets in configs/experiments/ turn them on):
+  foot_clearance: 0.0         # + : swing feet reach foot_clearance_target above last touchdown
+  feet_slip: 0.0              # - : sum of stance-foot horizontal speeds (m/s)
+  feet_stumble: 0.0           # - : 1 if a foot's horizontal force > stumble_force_ratio x vertical
+  base_height_band: 0.0       # - : squared distance of the height above the feet outside the band
+  knee_bend: 0.0              # - : sum of max(0, knee_min_bend - |q_calf|) (rad)
+  torques_rated: 0.0          # - : sum of (tau / continuous_torque)^2, torque_limit if no rating
+  torque_rate: 0.0            # - : sum of ((tau_t - tau_t-1) / continuous_torque)^2 (as torques_rated)
+  feet_impact: 0.0            # - : sum of (max(0, |F_z| - impact_force_k * m g / 4) / (m g))^2
+
+# Linear weight ramps, in env steps (env.common_step_counter). One PPO iteration is
+# steps_per_env env steps (24 in algorithms/ppo.yaml), so iteration i = 24 * i steps.
+#   reward_ramps: {torques_rated: {start_steps: 7200, end_steps: 24000, start_scale: 0.0}}
+reward_ramps: {}
 
 reward_params:
   tracking_sigma: 0.25        # exp(-error^2 / sigma)
   air_time_target: 0.5        # s; feet_air_time rewards (t_air - target) at each touchdown
   base_height_target: null    # m
+  foot_clearance_target: 0.07 # m, swing height above the last touchdown point (Astra)
+  foot_clearance_std: 0.05    # exp(-sum err / std)
+  foot_clearance_tanh_mult: 2.0  # foot weight tanh(mult * |v_xy|): stance feet barely count
+  stumble_force_ratio: 2.0    # |F_xy| / |F_z| above which a foot contact counts as a stumble
+  base_height_band: null      # [low, high] m, trunk height above the feet in contact
+  knee_min_bend: 0.9          # rad, |q_calf| below this is penalized (Astra)
+  impact_force_k: 1.5         # feet_impact: vertical foot force above k x a quarter of the weight
 
 # Clip each step's total reward at 0. Without it, early policies whose penalties
 # outweigh tracking reward learn to fall over to end the episode.

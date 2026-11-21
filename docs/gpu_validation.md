@@ -88,6 +88,13 @@ attempt and a table at the end. The full output of each attempt is in
 
 Exit codes: 0 all stages passed, 1 a stage failed 5 times, 3 the GPU was lost.
 
+Optional, not the default: if you are watching the run and stages are being killed while
+still importing or compiling, prefix the command with `NO_TIMEOUT=1`. That turns off the
+hang kill, the hard limit `ATTEMPT_LIMIT_S` and the stall timeout inside the stages
+(they get `QUADRUPED_NO_TIMEOUT=1` and `STALL_TIMEOUT_S=0`); the GPU-lost check stays on.
+A real hang then waits for you to stop it with Ctrl-C. `HANG_S=0` or `ATTEMPT_LIMIT_S=0`
+turns off just that one check.
+
 **Good** means all three of these:
 
 1. The last line is `ALL STAGES PASSED`.

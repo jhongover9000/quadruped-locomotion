@@ -1,0 +1,94 @@
+# astra_stance2: HAND-MADE EXPERIMENT, not written by the importer. A copy of astra.yaml
+# with the low-torque stance from scripts/dev/stance_sweep.py (2026-11-18): hip abduction
+# 0.20 rad inward (feet towards the abduction axes), thigh 0.65, calf -1.10. Same model.
+# If it wins, the importer gets a 3-value --stance (hip, thigh, calf) and astra is
+# re-imported with it; delete this file then. Do not run --sync on it.
+#
+# Original header of astra.yaml:
+# astra: imported from astra.urdf by scripts/import_robot.py on 2026-11-18.
+# Edit numbers here as measurements improve, then run
+#   python scripts/import_robot.py --sync astra
+# so the SuperMimic side follows. Report: assets/robots/astra/import_report.md
+# Joint ranges set at import, not taken from the URDF:
+#   calf joints (FR_j3, FL_j3, RL_j3, RR_j3): range set to [0.3927, 2.9671] rad in URDF angles by --joint-range (URDF: continuous)
+name: astra_stance2
+model_path: assets/robots/astra/mjcf/astra.xml
+
+base_body: trunk
+foot_geoms: [FR_foot_collision, FL_foot_collision, RR_foot_collision, RL_foot_collision]
+foot_sites: [FR, FL, RR, RL]
+collision_geoms: '.*_collision\d*'
+base_contact_geoms: [trunk_collision, trunk_collision2, trunk_collision3, trunk_collision4, trunk_collision5]       # ground contact ends the episode
+undesired_contact_geoms: ['.*_thigh_collision\d*', '.*_calf_collision\d*']  # penalized
+
+# Policy action / observation order. Must match the model's joint order; never reorder
+# after training.
+joint_names:
+  - FR_hip_joint
+  - FR_thigh_joint
+  - FR_calf_joint
+  - FL_hip_joint
+  - FL_thigh_joint
+  - FL_calf_joint
+  - RR_hip_joint
+  - RR_thigh_joint
+  - RR_calf_joint
+  - RL_hip_joint
+  - RL_thigh_joint
+  - RL_calf_joint
+
+# Standing pose, rad, in this project's convention (hip 0 = leg vertical, thigh 0 = straight
+# down, calf 0 = in line with the thigh). hardware: below maps it to the URDF's angles.
+default_joint_pos: [0.2, 0.65, -1.1, -0.2, 0.65, -1.1, 0.2, 0.65, -1.1, -0.2, 0.65, -1.1]  # FR, FL, RR, RL; hip inward = +,-,+,-
+base_height_nominal: 0.4808            # m, trunk height in that pose, feet 0.1 mm above the floor (also the spawn height)
+mass_nominal: 17.0000                   # kg, the model's total mass
+
+actuator:
+  model: dc_motor        # PD clipped to a torque-speed line; see params
+  kp: [50, 50, 80]        # N*m/rad   [hip, thigh, calf] or 12 values
+  kd: [2, 2, 3.2]        # N*m*s/rad
+  torque_limit: [30, 30, 30]   # N*m
+  velocity_limit: [20, 20, 20] # rad/s
+  armature: [0.015, 0.015, 0.015]  # kg*m^2, reflected rotor inertia N^2 * I_rotor
+  frictionloss: [0.2, 0.2, 2]                  # N*m per joint (null keeps the model's value)
+  viscous_damping: null               # N*m*s/rad per joint
+  continuous_torque: [5, 5, 5]             # N*m per joint held continuously (thermal); null: unknown
+  # dc_motor torque-speed line, at the joint: available torque saturation_effort * (1 - w /
+  # no_load_speed), capped at torque_limit. PROVISIONAL, to be replaced by measurements:
+  # EaglePower 8308 90 KV, 10:1 reducer, moteus r4.11; ASSUMES a 24 V battery
+  # (24 V x 90 KV = 2160 rpm motor -> 22.6 rad/s joint) and ~0.1 ohm winding resistance
+  # (voltage-limited stall far above the 30 N m current limit). Net effect: full torque up
+  # to ~20 rad/s, then a steep drop to zero at 22.6 rad/s.
+  params:
+    saturation_effort: 250    # N*m, stall torque at the joint from the voltage limit
+    no_load_speed: 22.6       # rad/s at the joint
+
+# Ranges for per-environment randomization: what the measurements leave uncertain.
+domain_randomization:
+  friction: [0.3, 1.5]                # foot sliding friction
+  added_base_mass: [-1.36, 2.72]        # kg, point mass added at the trunk COM
+  base_com_offset: [-0.035, 0.035]    # m, each axis
+  kp_scale: [0.9, 1.1]
+  kd_scale: [0.9, 1.1]
+  motor_strength: [0.9, 1.1]          # torque-limit scale
+  frictionloss_scale: [1.0, 1.25]     # x actuator.frictionloss per joint: knee 2.0-2.5 N m (measured)
+  armature_scale: [0.5, 1.5]          # x actuator.armature per joint; wide, armature is unmeasured
+  encoder_bias: 0.015                 # rad, constant offset per joint (half-width)
+  action_delay_steps: [0, 1]          # control steps of command latency
+  push_interval_s: [5.0, 10.0]
+  push_velocity: 0.59                  # m/s, planar velocity kick
+
+# How this model's joint angles relate to the URDF's (and so to the motors, if the firmware
+# uses the URDF's zero and direction):   q_urdf = offset + sign * q_sim   per joint, in
+# joint_names order. The deployment code converts with this; verify it on the robot.
+hardware:
+  urdf_joint_names: [FR_j1, FR_j2, FR_j3, FL_j1, FL_j2, FL_j3, RR_j1, RR_j2, RR_j3, RL_j1, RL_j2, RL_j3]
+  sign: [1, -1, 1, -1, -1, 1, 1, -1, 1, -1, -1, 1]
+  offset: [0, 1.5707963, 3.1415927, 0, 1.5707963, 3.1415927, 0, 1.5707963, 3.1415927, 0, 1.5707963, 3.1415927]
+
+# SuperMimic world-model scales, once measured (supermimic-quadruped scripts/calibrate_scales.py
+# --robot astra); until then they are scaled from the Go1 by standing height.
+# supermimic:
+#   err_scale: [...]
+#   out_scale: [...]
+#   in_scale: [...]

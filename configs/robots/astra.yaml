@@ -37,15 +37,24 @@ base_height_nominal: 0.3886            # m, trunk height in that pose (also the 
 mass_nominal: 17.0000                   # kg, the model's total mass
 
 actuator:
-  model: ideal_pd
+  model: dc_motor        # PD clipped to a torque-speed line; see params
   kp: [50, 50, 80]        # N*m/rad   [hip, thigh, calf] or 12 values
   kd: [2, 2, 3.2]        # N*m*s/rad
   torque_limit: [30, 30, 30]   # N*m
   velocity_limit: [20, 20, 20] # rad/s
-  armature: [0, 0, 0]  # kg*m^2, reflected rotor inertia N^2 * I_rotor
+  armature: [0.015, 0.015, 0.015]  # kg*m^2, reflected rotor inertia N^2 * I_rotor
   frictionloss: [0.2, 0.2, 2]                  # N*m per joint (null keeps the model's value)
   viscous_damping: null               # N*m*s/rad per joint
-  params: {}
+  continuous_torque: [5, 5, 5]             # N*m per joint held continuously (thermal); null: unknown
+  # dc_motor torque-speed line, at the joint: available torque saturation_effort * (1 - w /
+  # no_load_speed), capped at torque_limit. PROVISIONAL, to be replaced by measurements:
+  # EaglePower 8308 90 KV, 10:1 reducer, moteus r4.11; ASSUMES a 24 V battery
+  # (24 V x 90 KV = 2160 rpm motor -> 22.6 rad/s joint) and ~0.1 ohm winding resistance
+  # (voltage-limited stall far above the 30 N m current limit). Net effect: full torque up
+  # to ~20 rad/s, then a steep drop to zero at 22.6 rad/s.
+  params:
+    saturation_effort: 250    # N*m, stall torque at the joint from the voltage limit
+    no_load_speed: 22.6       # rad/s at the joint
 
 # Ranges for per-environment randomization: what the measurements leave uncertain.
 domain_randomization:
@@ -55,6 +64,8 @@ domain_randomization:
   kp_scale: [0.9, 1.1]
   kd_scale: [0.9, 1.1]
   motor_strength: [0.9, 1.1]          # torque-limit scale
+  frictionloss_scale: [1.0, 1.25]     # x actuator.frictionloss per joint: knee 2.0-2.5 N m (measured)
+  armature_scale: [0.5, 1.5]          # x actuator.armature per joint; wide, armature is unmeasured
   encoder_bias: 0.015                 # rad, constant offset per joint (half-width)
   action_delay_steps: [0, 1]          # control steps of command latency
   push_interval_s: [5.0, 10.0]

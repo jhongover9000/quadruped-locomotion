@@ -25,6 +25,10 @@ observations:
 
 rewards:
   flat_orientation: -0.2      # relax: the body must tilt on slopes
+  # The gait-shaping terms (foot_clearance, feet_slip, feet_stumble, base_height_band,
+  # knee_bend, torques_rated), their reward_params and reward_ramps come from
+  # flat_velocity.yaml with weight 0. foot_clearance (height above the last touchdown) and
+  # base_height_band (height above the feet in contact) do not assume flat ground.
 
 terminations:
   bad_orientation_rad: null   # tilting is expected on slopes; base contact still ends episodes

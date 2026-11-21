@@ -23,6 +23,17 @@ supervisor exits with code 75, so a wrapper can continue the run from its last c
 instead of waiting out a cluster time limit (hpc/lib.sh). Being a separate process, the
 supervisor also catches hangs that hold the interpreter lock, which no thread inside the
 stuck process can do (seen in practice: torch.compile stuck in sympy for many minutes).
+
+No timeouts at all, for runs watched by hand (importing packages and first-time kernel
+compilation can be silent for many minutes and look like a stall):
+
+    QUADRUPED_NO_TIMEOUT=1 python scripts/train.py ...    # or: scripts/train.py --no-timeout
+
+Then ``supervise()`` returns at once (nothing is ever killed) and ``install()`` starts
+neither the stall report nor faulthandler's timer; crash stacks and ``kill -USR1`` still
+work. Being an environment variable, it reaches every child process (pipeline stages,
+evaluate.py, record.py). scripts/dev/run_stages.sh NO_TIMEOUT=1 sets it, and hpc/lib.sh
+then passes no --stall-timeout.
 """
 
 from __future__ import annotations
@@ -39,8 +50,26 @@ import time
 GIL_S = 120.0       # the monitor thread could not run for this long: stuck in native code
 STALL_EXIT_CODE = 75  # EX_TEMPFAIL: "try again"
 HEARTBEAT_ENV = "QUADRUPED_HEARTBEAT_FILE"
+NO_TIMEOUT_ENV = "QUADRUPED_NO_TIMEOUT"
 _state = {"stall_s": 0.0, "last": 0.0, "touched": 0.0, "installed": False, "what": "start",
-          "file": os.environ.get(HEARTBEAT_ENV)}
+          "file": os.environ.get(HEARTBEAT_ENV), "noted": False}
+
+
+def timeouts_disabled() -> bool:
+    """True when QUADRUPED_NO_TIMEOUT is set to 1 (or true/yes/on)."""
+    return os.environ.get(NO_TIMEOUT_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def disable_timeouts() -> None:
+    """Turn every timeout off for this process and its children (sets QUADRUPED_NO_TIMEOUT=1)."""
+    os.environ[NO_TIMEOUT_ENV] = "1"
+
+
+def _note_disabled() -> None:
+    if not _state["noted"]:
+        _state["noted"] = True
+        print(f"[watchdog] timeouts are off ({NO_TIMEOUT_ENV}=1): no stall kill, no stall stack dumps",
+              file=sys.stderr, flush=True)
 
 
 def supervise(kill_s: float | None) -> None:
@@ -49,6 +78,9 @@ def supervise(kill_s: float | None) -> None:
     Returns immediately in the child (and when ``kill_s`` is unset); in the supervising
     parent it never returns: it exits with the child's exit code, or 75 after a stall.
     """
+    if timeouts_disabled():
+        _note_disabled()
+        return
     if not kill_s or kill_s <= 0 or os.environ.get(HEARTBEAT_ENV):
         return
     fd, beat = tempfile.mkstemp(prefix="quadruped_heartbeat_")
@@ -88,6 +120,9 @@ def install(stall_s: float | None = None) -> None:
     faulthandler.enable(file=sys.stderr, all_threads=True)
     if hasattr(signal, "SIGUSR1"):
         faulthandler.register(signal.SIGUSR1, file=sys.stderr, all_threads=True)
+    if timeouts_disabled():
+        _note_disabled()
+        stall_s = 0.0
     _state.update(stall_s=float(stall_s), installed=True, last=time.monotonic())
     if stall_s > 0:
         print(f"[watchdog] pid {os.getpid()}: stacks are printed after {stall_s:.0f} s without "

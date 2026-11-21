@@ -298,6 +298,7 @@ import fills them from the mass and foot friction:
 | `friction` | foot friction range (0.6x to 1.4x the measured `foot_friction`) |
 | `added_base_mass`, `base_com_offset` | trunk mass and COM uncertainty |
 | `kp_scale`, `kd_scale`, `motor_strength` | servo gain and torque-limit spread |
+| `frictionloss_scale`, `armature_scale` | `[lo, hi]` factors on the joint dry friction (`actuator.frictionloss`) and reflected inertia (`actuator.armature`), one uniform draw per env and per joint (mjlab `dr.joint_friction`, `dr.joint_armature`) |
 | `encoder_bias` | constant per-joint offset on the actor's joint positions |
 | `action_delay_steps` | command latency, control steps |
 | `push_interval_s`, `push_velocity` | random pushes |
@@ -313,13 +314,28 @@ generated `RobotSpec`; action delay is not ported (`action_delay_substeps=(0, 0)
 
 ### Actuator model
 
-Training always simulates an ideal PD servo: MuJoCo's built-in position actuator with the
-YAML's `kp`, `kd`, `torque_limit`, `armature`, friction and damping
-(`src/quadruped_rl/envs/builder.py`). `actuator.model` accepts `analytic` and
-`actuator_net` (`src/quadruped_rl/actuators/`), but both are **stubs**, are only used
-outside the GPU simulator, and do not change training. `scripts/fit_actuator_model.py` is a
-**stub**. Until these exist, the actuator gap is covered by `kp_scale`, `kd_scale`,
-`motor_strength` and `action_delay_steps`.
+Training simulates one of two PD servos (`src/quadruped_rl/envs/builder.py`), both with
+the YAML's `kp`, `kd`, `torque_limit`, `armature`, friction and damping:
+
+- `model: ideal_pd`: MuJoCo's built-in position actuator, torque clipped at `torque_limit`.
+- `model: dc_motor`: the same PD law computed in torch every physics step (mjlab
+  `DcMotorActuator`), clipped to a DC motor's torque-speed line. With `actuator.params`
+  `saturation_effort` (N m, voltage-limited stall torque at the joint) and `no_load_speed`
+  (rad/s at the joint), the torque available in the direction of motion at joint speed w
+  is `min(torque_limit, saturation_effort * (1 - w / no_load_speed))`, the mirror image
+  for the other direction. Above `no_load_speed` mjlab's line goes negative: back-EMF then
+  forces a braking torque (down to `-torque_limit`). Both params take a scalar, a
+  `[hip, thigh, calf]` triple or 12 values. The PD damping is explicit here (the built-in
+  actuator's is implicit), so very small armature with large `kd` can be stiff. Note:
+  mjlab keeps the MuJoCo `ctrlrange` at `torque_limit`, so with `dc_motor` a
+  `motor_strength` factor above 1 is capped at `torque_limit`.
+
+`actuator.velocity_limit` is not applied by either. `analytic` and `actuator_net`
+(`src/quadruped_rl/actuators/`) are **stubs**, are only used outside the GPU simulator,
+and do not change training (`make_actuator` there does not know `dc_motor`).
+`scripts/fit_actuator_model.py` is a **stub**. Until measurements exist, the actuator gap
+is covered by `kp_scale`, `kd_scale`, `motor_strength`, `frictionloss_scale`,
+`armature_scale` and `action_delay_steps`.
 
 ### Sim2sim
 

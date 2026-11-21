@@ -211,6 +211,10 @@ def test_default_stance_and_config(imported):
     raw = yaml.safe_load(text)
     cfg = robot_from_dict(raw)
     assert cfg.joint_names == list(ui.JOINT_NAMES) and cfg.actuator.torque_limit == [25.0] * 12
+    assert raw["actuator"]["continuous_torque"] is None                  # written, unknown
+    act_c, _ = cli.resolve_actuator(robot, cli.argparse.Namespace(**{**vars(args), "continuous_torque": [5, 5, 6]}))
+    text_c = cli.robot_yaml(robot, act_c, q0, height, "assets/robots/awkward/mjcf/awkward.xml", {}, "awkward.urdf")
+    assert robot_from_dict(yaml.safe_load(text_c)).actuator.continuous_torque == [5.0, 5.0, 6.0] * 4
     assert cfg.base_contact_geoms == ["trunk_collision"]
     assert raw["hardware"]["urdf_joint_names"][0] == "rf_haa" and raw["hardware"]["sign"][0] == -1
     drop = ui.drop_test(robot, meshes, q0, height, act["kp"], act["kd"], act["torque_limit"], act["armature"])

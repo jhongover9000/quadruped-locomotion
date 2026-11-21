@@ -10,7 +10,8 @@ A recording is a directory:
     meta.json      run, checkpoint, task, schedule segments, joint names, ...
     video*.mp4     follow-camera videos           (scripts/record.py, scripts/replay.py --video)
     plots*.png     diagnostics for one robot      (scripts/record.py, scripts/replay.py --plots)
-    summary.txt    falls, tracking error per segment, smoothness metrics (also summary.json)
+    summary.txt    falls, tracking error, torques and gait per segment, smoothness metrics
+                   (also summary.json)
 
 Rendering re-poses the saved model from ``qpos``; it does not re-simulate, so what you see
 is exactly what happened in the rollout.
@@ -370,6 +371,89 @@ def tracking_errors(rollout: dict, meta: dict) -> dict:
     }
 
 
+JOINT_KINDS = ("hip", "thigh", "calf")
+
+
+def torque_stats(torques: np.ndarray, mask: np.ndarray, legs: list[str],
+                 continuous: list[float] | None = None) -> dict | None:
+    """RMS and peak |torque| per joint kind over the steps ``mask`` keeps, from
+    ``torques`` [T, N, 12] in the project's joint order (legs x hip, thigh, calf).
+    Each kind gives the largest value over the legs and the per-leg values; with a
+    per-joint ``continuous`` rating, ``over_continuous`` marks an RMS above it."""
+    if torques.shape[-1] != 3 * len(legs) or not mask.any():
+        return None
+    tau = np.abs(torques[mask].astype(np.float64))          # [steps, 12]
+    rms, peak = np.sqrt((tau ** 2).mean(0)), tau.max(0)
+    out = {}
+    for k, kind in enumerate(JOINT_KINDS):
+        idx = [3 * i + k for i in range(len(legs))]
+        over = [bool(continuous is not None and rms[j] > continuous[j]) for j in idx]
+        out[kind] = {"rms": float(rms[idx].max()), "peak": float(peak[idx].max()),
+                     "per_leg": {leg: {"rms": float(rms[j]), "peak": float(peak[j]),
+                                       **({"over_continuous": o} if continuous is not None else {})}
+                                 for leg, j, o in zip(legs, idx, over)}}
+        if continuous is not None:
+            out[kind]["over_continuous"] = any(over)
+    return out
+
+
+def _true_runs(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Start and end (exclusive) indices of the runs of True in a 1-D bool array."""
+    d = np.diff(np.concatenate([[0], x.astype(np.int8), [0]]))
+    return np.flatnonzero(d == 1), np.flatnonzero(d == -1)
+
+
+def gait_stats(rollout: dict, a: int, b: int, mask: np.ndarray, dt: float) -> dict | None:
+    """Gait of one segment [a, b) over the steps ``mask`` [b - a, N] keeps (as for rmse).
+
+    clearance_mm_median / _p90: peak height of the foot's lowest point (``foot_pos_w`` z)
+      per swing, over swings that lie wholly inside the kept steps (None without
+      ``foot_pos_w``, e.g. recordings made before it existed). Height above z = 0: flat
+      ground only.
+    thigh_excursion_rad / calf_excursion_rad: p95 - p5 of the joint angle per robot and
+      leg, mean over both.   calf_mean_rad: mean calf angle.   trunk_height_m: mean base z.
+    stride_hz: touchdowns per foot per second of kept steps.   duty_factor: fraction of foot-steps in
+      contact.   power_W: mean of sum over joints |tau * qdot|.
+    """
+    if not mask.any():
+        return None
+    q = rollout["joint_pos"][a:b].astype(np.float64)
+    T, N = mask.shape
+    out = {}
+    for name, k in (("thigh", 1), ("calf", 2)):
+        exc = []
+        for n in range(N):
+            x = q[mask[:, n], n, k::3]                     # [steps, legs]
+            if len(x):
+                exc.extend(np.percentile(x, 95, axis=0) - np.percentile(x, 5, axis=0))
+        out[f"{name}_excursion_rad"] = float(np.mean(exc))
+    out["calf_mean_rad"] = float(q[..., 2::3][mask].mean())
+    out["trunk_height_m"] = float(rollout["qpos"][a:b, :, 2][mask].mean())
+
+    contact = rollout["foot_contact"][a:b].astype(bool)  # [T, N, 4]
+    both = mask[1:] & mask[:-1]                          # transitions between kept steps
+    touchdowns = (contact[1:] & ~contact[:-1] & both[..., None]).sum()
+    out["stride_hz"] = float(touchdowns / (contact.shape[-1] * max(int(both.sum()), 1) * dt))
+    out["duty_factor"] = float(contact[mask].mean())
+
+    if "torques" in rollout:
+        p = np.abs(rollout["torques"][a:b].astype(np.float64) * rollout["joint_vel"][a:b]).sum(-1)
+        out["power_W"] = float(p[mask].mean())
+
+    peaks = []
+    if "foot_pos_w" in rollout:
+        z = rollout["foot_pos_w"][a:b, ..., 2]           # [T, N, 4]
+        for n in range(N):
+            for f in range(contact.shape[-1]):
+                for s, e in zip(*_true_runs(~contact[:, n, f])):
+                    if s > 0 and e < T and mask[s - 1:e + 1, n].all():   # complete swing
+                        peaks.append(z[s:e, n, f].max())
+    out["swings"] = len(peaks)
+    out["clearance_mm_median"] = float(np.median(peaks) * 1000) if peaks else None
+    out["clearance_mm_p90"] = float(np.percentile(peaks, 90) * 1000) if peaks else None
+    return out
+
+
 def summarize(rollout: dict, meta: dict) -> dict:
     from quadruped_rl.evaluation import metrics
 
@@ -378,6 +462,8 @@ def summarize(rollout: dict, meta: dict) -> dict:
     N = fell.shape[1]
     ok = valid_mask(rollout, meta)
     cmd, v, w = rollout["command"], rollout["base_lin_vel_b"], rollout["base_ang_vel_b"]
+    legs = list(meta.get("foot_names") or ("FR", "FL", "RR", "RL"))
+    continuous = meta.get("continuous_torque")
 
     segments = []
     for seg in meta.get("segments") or [{"label": "whole rollout", "start_s": 0.0,
@@ -393,6 +479,9 @@ def summarize(rollout: dict, meta: dict) -> dict:
                        mean_wz=float(w[a:b, :, 2][m].mean()),
                        rmse_xy=float(np.sqrt((e_xy ** 2).mean())),
                        rmse_wz=float(np.sqrt((e_wz ** 2).mean())))
+        if "torques" in rollout:
+            row["torque_Nm"] = torque_stats(rollout["torques"][a:b], m, legs, continuous)
+        row["gait"] = gait_stats(rollout, a, b, m, dt)
         segments.append(row)
 
     clean = [n for n in range(N) if not fell[:, n].any()]
@@ -409,7 +498,7 @@ def summarize(rollout: dict, meta: dict) -> dict:
            "robots_that_fell": int(fell.any(0).sum()),
            "falls_per_robot": fell.sum(0).astype(int).tolist(),
            "segments": segments, "metrics_mean_over_robots_without_falls": smooth,
-           "robots_without_falls": len(clean)}
+           "robots_without_falls": len(clean), "continuous_torque_Nm": continuous}
     if "ref_qpos" in rollout:
         out["tracking"] = tracking_errors(rollout, meta)
     return out
@@ -435,6 +524,39 @@ def format_summary(s: dict, meta: dict) -> str:
             lines.append(f"{r['label']:<28}{cs:>22}{'(no valid steps)':>24}{'':>18}{r['falls']:>7}")
     lines += ["", ("Columns: command and actual are vx m/s, vy m/s, wz rad/s; rmse excludes the "
                    "first 1 s of each segment and after each fall.")]
+    if any(r.get("torque_Nm") for r in s["segments"]):
+        lines += ["", "Joint torque, N m: RMS and peak |torque|, largest over the four legs (same steps as rmse)",
+                  f"{'segment':<28}" + "".join(f"{k + ' rms':>11}" for k in JOINT_KINDS)
+                  + "".join(f"{k + ' peak':>12}" for k in JOINT_KINDS)]
+        for r in s["segments"]:
+            t = r.get("torque_Nm")
+            if not t:
+                lines.append(f"{r['label']:<28}{'(no valid steps)':>33}")
+                continue
+            rms = "".join(f"{t[k]['rms']:>10.2f}" + ("*" if t[k].get("over_continuous") else " ")
+                          for k in JOINT_KINDS)
+            lines.append(f"{r['label']:<28}{rms}" + "".join(f"{t[k]['peak']:>12.2f}" for k in JOINT_KINDS))
+        cont = s.get("continuous_torque_Nm")
+        if cont:
+            rating = ", ".join(f"{kind} {max(cont[k::3]):g}" for k, kind in enumerate(JOINT_KINDS))
+            lines.append(f"* RMS above the continuous torque rating ({rating} N m; robot config "
+                         "actuator.continuous_torque) on at least one leg.")
+    if any(r.get("gait") for r in s["segments"]):
+        lines += ["", ("Gait (same steps as rmse): swing foot clearance median / p90 mm, thigh and "
+                       "calf excursion p95-p5 rad, mean calf rad, trunk m, stride Hz, duty, power W"),
+                  f"{'segment':<28}{'clear':>7}{'p90':>6}{'thigh':>7}{'calf':>7}{'calf q':>8}"
+                  f"{'trunk':>7}{'stride':>8}{'duty':>6}{'power':>7}"]
+        for r in s["segments"]:
+            g = r.get("gait")
+            if not g:
+                lines.append(f"{r['label']:<28}{'(no valid steps)':>33}")
+                continue
+            cl = ("".join(f"{g[k]:>{w}.0f}" for k, w in (("clearance_mm_median", 7), ("clearance_mm_p90", 6)))
+                  if g["clearance_mm_median"] is not None else f"{'-':>7}{'-':>6}")
+            pw = f"{g['power_W']:>7.0f}" if "power_W" in g else f"{'-':>7}"
+            lines.append(f"{r['label']:<28}{cl}{g['thigh_excursion_rad']:>7.2f}{g['calf_excursion_rad']:>7.2f}"
+                         f"{g['calf_mean_rad']:>8.2f}{g['trunk_height_m']:>7.3f}{g['stride_hz']:>8.2f}"
+                         f"{g['duty_factor']:>6.2f}{pw}")
     tr = s.get("tracking")
     if tr:
         lines += ["", "Tracking (command = the reference clip's base velocity):",

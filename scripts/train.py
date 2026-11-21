@@ -3,6 +3,7 @@
     python scripts/train.py --algo ppo                       # default task for the algorithm
     python scripts/train.py --algo ppo --task rough_velocity --seed 1
     python scripts/train.py --algo ppo --set rewards.action_rate=-0.02
+    python scripts/train.py --algo ppo --preset astra_D      # configs/experiments/astra_D.yaml
     python scripts/train.py --algo ppo_rslrl                 # reference PPO, same environment
     python scripts/train.py --algo supermimic                # motion tracking, world model + BPTT
     python scripts/train.py --algo ppo --num-envs 64 --max-iterations 5   # quick smoke test
@@ -19,6 +20,10 @@ status.json. Watch progress live with:  tensorboard --logdir outputs
 --resume starts a new run from a checkpoint and trains --max-iterations more.
 --continue-run picks an interrupted run up in place, with its saved config, and trains
 only what is left of its max_iterations (used by the cluster pipeline in hpc/).
+
+--preset NAME loads configs/experiments/NAME.yaml: task overrides (dotted keys, as with
+--set) plus optional default task_name / robot / algo. Explicit --set, --task, --robot
+and --algo win over the preset. The preset name is saved in the run's config.yaml.
 """
 
 from __future__ import annotations
@@ -39,9 +44,17 @@ from quadruped_rl.algorithms import (
     get_algorithm,
 )
 from quadruped_rl.robots import load_robot, robot_from_dict
-from quadruped_rl.utils.config import apply_overrides, available, load_group
+from quadruped_rl.utils.config import (
+    apply_dotted,
+    apply_overrides,
+    available,
+    load_group,
+    load_preset,
+)
 from quadruped_rl.utils.paths import OUTPUT_DIR
 from quadruped_rl.utils.seeding import seed_everything
+
+DEFAULT_ROBOT = "go1"
 
 
 def default_device() -> str:
@@ -86,7 +99,10 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--algo", choices=available("algorithms"))
     p.add_argument("--task", choices=available("tasks"), help="defaults to the algorithm's default_task")
-    p.add_argument("--robot", default="go1", choices=available("robots"))
+    p.add_argument("--robot", choices=available("robots"),
+                   help=f"default: the preset's robot, else {DEFAULT_ROBOT}")
+    p.add_argument("--preset", choices=available("experiments"),
+                   help="experiment preset from configs/experiments/ (--set entries win over it)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE",
                    help="override task config entries, e.g. rewards.action_rate=-0.02")
@@ -99,6 +115,9 @@ def main() -> None:
     p.add_argument("--stall-timeout", type=float, metavar="SECONDS",
                    help="end the run (exit code 75) if it makes no progress for this long; "
                         "continue it with --continue-run. Default: only report stalls")
+    p.add_argument("--no-timeout", action="store_true",
+                   help="for runs watched by hand: no stall kill and no stall stack dumps, here and in "
+                        "child processes (sets QUADRUPED_NO_TIMEOUT=1; overrides --stall-timeout)")
     p.add_argument("--device", help="cuda:0 or cpu (default: cuda:0 if available)")
     p.add_argument("--resume", type=Path, help="checkpoint to start a new run from")
     p.add_argument("--continue-run", type=Path, metavar="RUN_DIR",
@@ -114,6 +133,12 @@ def main() -> None:
 
     from quadruped_rl.utils import watchdog
 
+    if args.no_timeout:
+        watchdog.disable_timeouts()
+        if args.stall_timeout:
+            print(f"--no-timeout overrides --stall-timeout {args.stall_timeout:g}: the run is never "
+                  "ended for lack of progress", file=sys.stderr, flush=True)
+        args.stall_timeout = None
     if not args.dry_run:
         watchdog.supervise(args.stall_timeout)   # returns in the training process only
 
@@ -140,7 +165,13 @@ def main() -> None:
             print(f"Continuing {run_dir}: no checkpoint yet, starting from scratch")
         if args.max_hours is not None:
             algo_cfg["max_hours"] = args.max_hours
+        if args.preset:
+            print(f"--preset {args.preset} ignored: --continue-run uses the run's saved config",
+                  file=sys.stderr)
     else:
+        preset = load_preset(args.preset) if args.preset else {}
+        args.algo = args.algo or preset.get("algo")
+        args.robot = args.robot or preset.get("robot") or DEFAULT_ROBOT
         if args.algo is None:
             p.error("--algo is required (or --continue-run RUN_DIR, or --list)")
         algo_name, seed = args.algo, args.seed
@@ -151,14 +182,17 @@ def main() -> None:
             algo_cfg["max_iterations"] = args.max_iterations
         if args.max_hours is not None:
             algo_cfg["max_hours"] = args.max_hours
-        task_name = args.task or algo_cfg["default_task"]
-        task_cfg = apply_overrides(load_group("tasks", task_name), args.set)
+        task_name = args.task or preset.get("task_name") or algo_cfg["default_task"]
+        # Preset first, then --set: explicit command-line entries win.
+        task_cfg = apply_dotted(load_group("tasks", task_name), preset.get("task"))
+        task_cfg = apply_overrides(task_cfg, args.set)
         robot = load_robot(args.robot)
         resolved = {
             "algo": algo_cfg,
             "task": task_cfg,
             "robot": load_group("robots", args.robot),
             "seed": seed,
+            "preset": args.preset,
             "overrides": args.set,
         }
         target = int(algo_cfg.get("max_iterations", 0))

@@ -13,11 +13,12 @@ from quadruped_rl.utils.config import load_group
 from quadruped_rl.utils.paths import REPO_ROOT
 
 LEGS = ("FR", "FL", "RR", "RL")
+DC_MOTOR_PARAMS = ("saturation_effort", "no_load_speed")   # actuator.params for model dc_motor
 
 
 @dataclass
 class ActuatorSpec:
-    model: str                    # "ideal_pd" | "analytic" | "actuator_net"
+    model: str                    # "ideal_pd" | "dc_motor" | "analytic" | "actuator_net"
     kp: list[float]               # per joint, N*m/rad
     kd: list[float]               # per joint, N*m*s/rad
     torque_limit: list[float]     # per joint, N*m
@@ -25,7 +26,12 @@ class ActuatorSpec:
     armature: list[float]         # per joint, kg*m^2
     frictionloss: list[float] | None = None     # per joint, N*m (None: keep model value)
     viscous_damping: list[float] | None = None  # per joint, N*m*s/rad
-    params: dict = field(default_factory=dict)  # model-specific: delay, friction, net path
+    # Torque each joint can hold continuously (thermal rating), per joint, N*m. Only
+    # reported against (scripts/record.py); None: unknown.
+    continuous_torque: list[float] | None = None
+    # Model-specific: delay, friction, net path. dc_motor: saturation_effort (N*m, stall
+    # torque at the joint) and no_load_speed (rad/s at the joint), each expanded per joint.
+    params: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -77,6 +83,13 @@ class RobotConfig:
             per_joint["actuator.frictionloss"] = self.actuator.frictionloss
         if self.actuator.viscous_damping is not None:
             per_joint["actuator.viscous_damping"] = self.actuator.viscous_damping
+        if self.actuator.continuous_torque is not None:
+            per_joint["actuator.continuous_torque"] = self.actuator.continuous_torque
+        if self.actuator.model == "dc_motor":
+            for key in DC_MOTOR_PARAMS:
+                if key not in self.actuator.params:
+                    raise ValueError(f"{self.name}: actuator model dc_motor needs actuator.params.{key}")
+                per_joint[f"actuator.params.{key}"] = self.actuator.params[key]
         for key, values in per_joint.items():
             if len(values) != n:
                 raise ValueError(f"{self.name}: {key} has {len(values)} entries, expected {n}")
@@ -88,6 +101,15 @@ class RobotConfig:
                 raise ValueError(f"{self.name}: hardware.{key} needs {n} entries")
         if min(self.actuator.kp) <= 0:
             raise ValueError(f"{self.name}: every actuator.kp must be positive")
+        if self.actuator.model == "dc_motor":
+            for key in DC_MOTOR_PARAMS:
+                if min(self.actuator.params[key]) <= 0:
+                    raise ValueError(f"{self.name}: every actuator.params.{key} must be positive")
+        for key in ("frictionloss_scale", "armature_scale"):
+            if key in self.domain_randomization:
+                lo, hi = self.domain_randomization[key]
+                if not 0 <= lo <= hi:
+                    raise ValueError(f"{self.name}: domain_randomization.{key} needs 0 <= lo <= hi")
 
 
 def _per_joint(value, n: int) -> list[float]:
@@ -113,6 +135,10 @@ def robot_from_dict(raw: dict) -> RobotConfig:
     def optional(key):
         return None if act.get(key) is None else _per_joint(act[key], n)
 
+    params = dict(act.get("params") or {})
+    if act["model"] == "dc_motor":
+        params.update({k: _per_joint(params[k], n) for k in DC_MOTOR_PARAMS if k in params})
+
     cfg = RobotConfig(
         name=raw["name"],
         model_path=str(raw["model_path"]),
@@ -135,7 +161,8 @@ def robot_from_dict(raw: dict) -> RobotConfig:
             armature=_per_joint(act.get("armature", 0.0), n),
             frictionloss=optional("frictionloss"),
             viscous_damping=optional("viscous_damping"),
-            params=act.get("params") or {},
+            continuous_torque=optional("continuous_torque"),
+            params=params,
         ),
         domain_randomization=raw.get("domain_randomization") or {},
         hardware=raw.get("hardware") or {},

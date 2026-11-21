@@ -1,6 +1,6 @@
 # Import report: astra
 
-Source: `/home/aimlab/code/quadruped-locomotion/assets/robots/custom/urdf/astra.urdf`, imported 2026-11-18 11:14.
+Source: `/home/aimlab/code/quadruped-locomotion/assets/robots/custom/urdf/astra.urdf`, imported 2026-11-18 14:00.
 
 ## Legs
 
@@ -61,13 +61,13 @@ Total 17.0000 kg. Standing height 0.3886 m.
 - torque limits: URDF <limit effort>
 - velocity limits: URDF <limit velocity>
 - PD gains: --kp / --kd
-- armature: 0 (unknown). Geared motors need it: put rotor_inertia and gear_ratio, or armature, under joint: in the measurements file
+- continuous torque: --continuous-torque
 - kp [50, 50, 80], kd [2, 2, 3.2], torque limit [30, 30, 30] N m
 
 ## Checks
 
 - Rebuilt model against the URDF at 20 random poses (foot positions, centre of mass, mass): largest difference 3.55e-15 (m, kg).
-- Standing for 2 s on a floor with these gains: stays up; trunk 0.389 -> 0.351 m, tilt 2.1 deg, largest joint sag 0.129 rad, holding torque up to 34% of the limit.
+- Standing for 2 s on a floor with these gains: stays up; trunk 0.389 -> 0.354 m, tilt 1.7 deg, largest joint sag 0.126 rad, holding torque up to 34% of the limit.
 - Self-collisions in the standing pose: none.
 
 ## Motion retargeting (SuperMimic)

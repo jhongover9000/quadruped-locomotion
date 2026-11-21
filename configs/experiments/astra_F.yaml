@@ -1,0 +1,7 @@
+# astra_F: E with an absolute action scale. effort_relative gives each joint
+# 0.25 * torque_limit / kp (0.15 rad hip/thigh, 0.094 rad calf on Astra), which limits how
+# far a single action can bend the knee; absolute gives 0.25 rad on every joint.
+inherit: experiments/astra_E.yaml
+task:
+  action.scale_mode: absolute
+  action.scale: 0.25

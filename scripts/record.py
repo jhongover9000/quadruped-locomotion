@@ -22,7 +22,7 @@ Writes a recording directory (default <run>/recordings/<time>_<scenario>/):
 
     video.mp4       follow camera, command/actual readout, velocity arrows, fall banner
     plots.png       velocity tracking, joints, torques vs limits, actions, gait diagram
-    summary.txt     falls and tracking error per segment, smoothness metrics
+    summary.txt     falls, tracking error, torques and gait per segment, smoothness metrics
     rollout.npz, model.mjb.gz, meta.json   replay offline: python scripts/replay.py <dir>
 
 Runs on the GPU like play.py; rendering is offscreen (no window), so it also works over SSH
@@ -45,6 +45,7 @@ setup_gl()  # must run before mujoco is imported
 from quadruped_rl.evaluation import render
 from quadruped_rl.evaluation.plots import plot_rollout
 from quadruped_rl.evaluation.rollout import SCENARIOS, load_run, make_schedule, record_rollout
+from quadruped_rl.robots import load_robot
 from quadruped_rl.utils.config import available
 
 
@@ -109,6 +110,15 @@ def main() -> None:
     root_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, root)
     limits = [float(model.actuator_forcerange[i, 1]) if model.actuator_forcelimited[i] else None
               for i in range(model.nu)]
+    # Continuous (thermal) torque rating to report against. A run saved before the field
+    # existed has none, so fall back to the robot's current config: it is a hardware
+    # rating, not something the policy was trained with.
+    continuous = run.robot.actuator.continuous_torque
+    if continuous is None:
+        try:
+            continuous = load_robot(run.robot.name).actuator.continuous_torque
+        except Exception:  # noqa: BLE001 - no such config any more: report without a rating
+            continuous = None
     segments, start = [], 0.0
     for s in schedule or []:
         segments.append({"label": s.label, "command": list(s.command), "start_s": start,
@@ -125,6 +135,7 @@ def main() -> None:
         "seed": args.seed, "root_body": root, "mass": float(model.body_subtreemass[root_id]),
         "joint_names": list(run.robot.joint_names), "foot_names": list(run.robot.foot_sites),
         "torque_limits": limits, "command": args.command, "kind": run.kind,
+        "continuous_torque": continuous,
     }
 
     if args.out:

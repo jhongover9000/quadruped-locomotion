@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 
 import mujoco
-from mjlab.actuator import BuiltinPositionActuatorCfg
+from mjlab.actuator import BuiltinPositionActuatorCfg, DcMotorActuatorCfg
 from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
@@ -49,23 +49,33 @@ def _exact(names) -> str:
 
 # ---- robot ------------------------------------------------------------------------
 
+def _actuator_cfg(act, j: int, name: str, lag_min: int, lag_max: int):
+    """One joint's actuator. ideal_pd (and anything else): MuJoCo's built-in position
+    actuator, clipped at torque_limit. dc_motor: the same PD computed in torch, clipped to
+    the torque-speed line saturation_effort * (1 - w / no_load_speed), capped at
+    torque_limit (mjlab DcMotorActuator)."""
+    common = dict(
+        target_names_expr=(re.escape(name),),
+        stiffness=act.kp[j],
+        damping=act.kd[j],
+        effort_limit=act.torque_limit[j],
+        armature=act.armature[j],
+        frictionloss=None if act.frictionloss is None else act.frictionloss[j],
+        viscous_damping=None if act.viscous_damping is None else act.viscous_damping[j],
+        delay_min_lag=lag_min,
+        delay_max_lag=lag_max,
+    )
+    if act.model == "dc_motor":
+        return DcMotorActuatorCfg(**common, saturation_effort=act.params["saturation_effort"][j],
+                                  velocity_limit=act.params["no_load_speed"][j])
+    return BuiltinPositionActuatorCfg(**common)
+
+
 def make_robot_entity(robot, decimation: int) -> EntityCfg:
     act = robot.actuator
     lag_min, lag_max = action_delay_lag(robot, decimation)
-    actuators = tuple(
-        BuiltinPositionActuatorCfg(
-            target_names_expr=(re.escape(name),),
-            stiffness=act.kp[j],
-            damping=act.kd[j],
-            effort_limit=act.torque_limit[j],
-            armature=act.armature[j],
-            frictionloss=None if act.frictionloss is None else act.frictionloss[j],
-            viscous_damping=None if act.viscous_damping is None else act.viscous_damping[j],
-            delay_min_lag=lag_min,
-            delay_max_lag=lag_max,
-        )
-        for j, name in enumerate(robot.joint_names)
-    )
+    actuators = tuple(_actuator_cfg(act, j, name, lag_min, lag_max)
+                      for j, name in enumerate(robot.joint_names))
     for geom in robot.foot_geoms:
         if not re.fullmatch(robot.collision_geoms, geom):
             raise ValueError(f"{robot.name}: foot geom '{geom}' does not match collision_geoms "
@@ -186,13 +196,33 @@ def make_observations(obs_cfg: dict, robot) -> dict[str, ObservationGroupCfg]:
     return groups
 
 
-def make_rewards(task: dict) -> dict[str, RewardTermCfg]:
+def _num(value):
+    """float(value), keeping None (a null reward_params entry is reported below)."""
+    return None if value is None else float(value)
+
+
+def _band(value) -> dict:
+    low, high = (None, None) if value is None else value
+    return {"low": _num(low), "high": _num(high)}
+
+
+def make_rewards(task: dict, robot=None) -> dict[str, RewardTermCfg]:
     rp = task.get("reward_params") or {}
     params_for = {
         "track_lin_vel_xy": lambda: {"sigma": rp["tracking_sigma"]},
         "track_ang_vel_z": lambda: {"sigma": rp["tracking_sigma"]},
         "feet_air_time": lambda: {"target": rp["air_time_target"]},
         "base_height": lambda: {"target": rp["base_height_target"]},
+        "foot_clearance": lambda: {"target": _num(rp.get("foot_clearance_target")),
+                                   "std": _num(rp.get("foot_clearance_std")),
+                                   "tanh_mult": _num(rp.get("foot_clearance_tanh_mult"))},
+        "feet_stumble": lambda: {"ratio": _num(rp.get("stumble_force_ratio"))},
+        "base_height_band": lambda: _band(rp.get("base_height_band")),
+        "knee_bend": lambda: {"joint_ids": reward_terms.calf_joint_ids(robot.joint_names),
+                              "min_bend": _num(rp.get("knee_min_bend"))},
+        "torques_rated": lambda: {"tau_ref": reward_terms.rated_torque(robot)},
+        "torque_rate": lambda: {"tau_ref": reward_terms.rated_torque(robot)},
+        "feet_impact": lambda: {"k": _num(rp.get("impact_force_k"))},
     }
     rewards = {}
     for name, weight in task["rewards"].items():
@@ -208,6 +238,25 @@ def make_rewards(task: dict) -> dict[str, RewardTermCfg]:
             raise ValueError(f"Reward '{name}' is enabled but its reward_params entry is null")
         rewards[name] = RewardTermCfg(func=func, weight=float(weight), params=params)
     return rewards
+
+
+def make_reward_ramps(task: dict, rewards: dict) -> dict[str, CurriculumTermCfg]:
+    """Curriculum terms for ``reward_ramps: {term: {start_steps, end_steps, start_scale}}``:
+    the term's weight goes linearly from start_scale x weight to weight between those env
+    steps (env.common_step_counter). Ramps on disabled (weight 0) terms are ignored."""
+    ramps = {}
+    for name, ramp in (task.get("reward_ramps") or {}).items():
+        if name not in task["rewards"]:
+            raise KeyError(f"reward_ramps.{name}: no such entry under rewards")
+        if name not in rewards:
+            continue
+        ramps[f"ramp_{name}"] = CurriculumTermCfg(func=reward_terms.reward_weight_ramp, params={
+            "reward_name": name,
+            "start_steps": int(ramp["start_steps"]),
+            "end_steps": int(ramp["end_steps"]),
+            "start_scale": float(ramp.get("start_scale", 0.0)),
+        })
+    return ramps
 
 
 def make_terminations(term_cfg: dict, generator_terrain: bool) -> dict[str, TerminationTermCfg]:
@@ -251,6 +300,9 @@ def make_env_cfg(robot, task: dict, num_envs: int, play: bool = False,
     if generator and not play:
         curriculum["terrain_levels"] = CurriculumTermCfg(
             func=velocity_mdp.terrain_levels_vel, params={"command_name": COMMAND_NAME})
+    rewards = make_rewards(task, robot)
+    if not play:                                # play/evaluation uses the full weights
+        curriculum.update(make_reward_ramps(task, rewards))
 
     return ManagerBasedRlEnvCfg(
         scene=SceneCfg(
@@ -264,7 +316,7 @@ def make_env_cfg(robot, task: dict, num_envs: int, play: bool = False,
         actions={"joint_pos": make_action(robot, task["action"])},
         commands={COMMAND_NAME: make_velocity_command(task["commands"])},
         events=make_events(robot, play=play),
-        rewards=make_rewards(task),
+        rewards=rewards,
         terminations=make_terminations(task.get("terminations") or {}, generator),
         curriculum=curriculum,
         viewer=ViewerConfig(

@@ -1,0 +1,20 @@
+# astra_D: does rewarding foot height and penalizing straight knees fix the shuffle?
+# Baseline policies on astra_stance2 trot on near-straight legs: median swing peak 23-28 mm,
+# knee excursion ~0.35 rad, trunk 0.49-0.53 m against a 0.39-0.48 m design stance.
+# D adds the gait-shaping terms, keeps everything else (incl. the plain torques term).
+#   python scripts/train.py --algo ppo --preset astra_D
+# Weights calibrated on the shuffling policy's rollout
+# (outputs/ppo/flat_velocity/20261118_214344_astra_stance2_s0, recordings/..._tour):
+# each penalty costs ~0.1-0.3 per step there, against ~1.3 of tracking reward.
+robot: astra_stance2
+algo: ppo
+task:
+  rewards.foot_clearance: 1.0             # rollout (25 mm swings) 0.56; 70 mm swings ~0.91
+  reward_params.foot_clearance_target: 0.07   # m above the last touchdown point
+  reward_params.foot_clearance_std: 0.01  # task default 0.05 gives 25 mm swings 0.89: too little signal
+  reward_params.foot_clearance_tanh_mult: 2.0
+  rewards.feet_slip: -2.0                 # rollout 0.098 m/s -> 0.20 per step
+  rewards.knee_bend: -0.3                 # rollout 0.62 rad -> 0.18 per step
+  reward_params.knee_min_bend: 0.9        # rad; the stance default is 1.10
+  rewards.base_height_band: -100.0        # rollout 0.0022 m^2 (h 0.517 m) -> 0.22 per step
+  reward_params.base_height_band: [0.43, 0.47]   # m, trunk above the feet in contact

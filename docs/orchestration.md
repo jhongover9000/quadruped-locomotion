@@ -45,6 +45,10 @@ Answered by Joseph on 2026-11-16:
 7. Hardware for phase 4 (answered 11-16, late evening): the policy runs on a Raspberry
    Pi 4 and the motor controllers are moteus r4.11. What follows from that is under P4.1.
 
+9. Astra team answers (11-18): gains, motors, knee, torque, friction and mass are recorded
+   under Phase 2. The first full PPO run walks: 0.97 m/s when commanded 1.0 m/s, no falls.
+   The open problem is joint torque against the 5 N m continuous rating.
+
 Still open:
 
 6. **Go1 hip stance.** `configs/robots/go1.yaml` stands with hips at ±0.1 rad and the
@@ -96,7 +100,9 @@ Fix round done 12:10, CPU only, not committed:
   Gemini CLI is installed.
 
 Still open:
-- A GPU PPO smoke, after a WSL restart.
+- A GPU PPO run is in `docs/gpu_tasks.md` (G1); Joseph runs the GPU jobs. His 11-18
+  13:04 run stood still because it used `--num-envs 64`, which is 64x fewer steps than the
+  Go1 comparison run.
 - Each recording's `model.mjb.gz` is 77 MB because the visual meshes have 893k faces.
   Consider decimating them at import.
 
@@ -362,26 +368,159 @@ The team robot is **Astra**. URDF and meshes arrived 11-18 (`quadruped-model/`, 
 - Feet: a convex collision mesh on each calf; the foot links have no geometry.
 - Joint dry friction 0.2 N m on j1 and j2, 2.0 N m on j3; no damping, no armature.
 
-Questions for the team (the first three block a real import):
+Team answers (11-18, via Joseph), and what follows from each:
 
-1. The gains the moteus controllers will run (kp, kd per joint).
-2. Motors, gear ratios and rotor inertia (armature), and whether there is an output-side
-   encoder (zeroing at power-on, `docs/robot_requirements.md` section 4).
-3. The knee's physical range (the URDF has none). The provisional import derives one from
-   the collision shapes.
-4. Is the 30 N m a peak or a continuous rating, and at what current limit?
-5. Is the knee's 2.0 N m dry friction measured or estimated? It is ten times the others
-   and matters for the swing.
-6. Does the trunk's 6.6 kg include battery, Pi, controllers and wiring? A scale reading of
-   the assembled robot settles it.
-7. Can j2 go past 90 deg or below 0 if needed? ±45 deg around the stance is enough for
-   walking but tight for recovering from falls.
+1. **Gains.** The PD loop runs on the moteus. Ceiling: kp 318 N m/rad, kd 7.16 N m s/rad,
+   and the gains can only be scaled down at runtime. Whatever works in simulation below
+   that goes onto the robot unchanged. The current kp 50/50/80 and kd 2.0/2.0/3.2 stay.
+2. **Motors.** EaglePower 8308 (90 KV) on all 12 joints, with a 10:1 cycloidal reducer; the
+   knee adds a 1:1 belt. Rotor inertia is not measured yet; it comes after Joseph's exam.
+   Until then the armature is an estimate, 0.015 kg m^2 at the output (rotor about
+   1.5e-4 kg m^2 x 10^2). The encoder is on the motor side only, so at power-on the output
+   angle is known only to within 36 deg (one motor turn). The robot needs a homing
+   procedure: start in a known pose, then set the output position. See
+   `docs/robot_requirements.md`.
+3. **Knee range.** No mechanical stop; the knee can turn a full circle. The simulation keeps
+   the software range 0.3927 to 2.9671 rad, so the knee bends one way only. The moteus
+   position limits (`servopos.position_min/max`) must enforce the same range on the robot.
+4. **Torque.** 30 N m is a measured peak; the true peak may be near 40 and is still to be
+   measured. The simulation stays at 30. **Continuous torque is about 5 N m per joint**,
+   set by driver temperature. Short periods above that are fine, and fans are being added
+   to the knee drivers. This is the binding constraint (see the next paragraph).
+5. **Friction.** Measured: knee 2.0 to 2.5 N m (2.0 used), hip pitch 0.2. Abduction is
+   assumed equal to hip pitch. These match the URDF already.
+6. **Trunk mass.** The 6.6 kg includes the battery, the computer, the wiring and the four
+   abduction actuators with their drivers. The other drivers are in the leg links. The CAD
+   masses stand.
+7. **Hip pitch range.** Preferably kept at 0 to 90 deg, but it can go to -20 to 100 deg if
+   needed. Kept: the policy walks within it.
 
-- [ ] **P2.1 Import the URDF.** Provisional import done on the CPU (see Work in flight). It
-  uses placeholder gains of kp 50/50/80, a placeholder knee range of 0.3927 to 2.9671 rad,
-  and has no SuperMimic side. The real import needs questions 1 to 3 answered. Rerun the
-  provisional command with the real `--kp`, `--kd` and `--joint-range`, then read
-  `assets/robots/astra/import_report.md`.
+**Torque against the 5 N m continuous rating.** These figures are from the first full PPO
+run (`20261118_132425_astra_s0`, 4096 envs, 1500 iterations) and its `--scenario forward`
+recording. They are RMS torques in N m, the largest leg for each joint, with the first
+eighth of each segment dropped:
+
+| Segment | Hip | Thigh | Knee | Peak knee torque |
+|---|---|---|---|---|
+| Standing | 2.2 | 5.8 | 7.0 | 15.7 |
+| 0.5 m/s | 4.8 | 7.7 | 9.1 | 30.6 |
+| 1.0 m/s | 5.9 | 8.3 | 12.5 | 33 |
+| 1.5 m/s | 8.3 | 8.6 | 14.4 | 33 |
+
+(33 is the 30 N m limit times the 1.1 motor-strength randomisation.)
+
+Even standing still exceeds 5 N m at the knee and thigh, and walking runs at two to three
+times the rating. On the robot, the drivers would heat up and the moteus would derate the
+torque partway through a walk. Next:
+- (a) Measure how long a joint can hold 8, 10 and 12 N m before the driver derates, with
+  the knee fans fitted. This is team bench work.
+- (b) Find the standing pose that loads the joints least (a sweep in simulation).
+- (c) Make training aware of the torque: a heavier torque penalty, and possibly a lower
+  speed range.
+- (d) Report RMS torque per joint in `record.py` so every run is checked against the rating.
+
+Done 11-18 afternoon (CPU, reviewed, adversarial review clean):
+- (d) is in: `actuator.continuous_torque` in the robot YAML, a torque table in
+  `record.py`'s summary, and `import_robot.py --continuous-torque`.
+- (b) is done: `scripts/dev/stance_sweep.py`, results in `outputs/debug/astra/stance_sweep.md`.
+  Hips 0.2 inward, thigh 0.65, calf -1.10 hold 1.4/1.5/5.1 N m. The current stance holds
+  6.6/2.7/10.5. Thigh and calf set the knee load; the abduction angle sets the hip load.
+- That pose is in the experimental `configs/robots/astra_stance2.yaml`: hand-made, trunk at
+  0.4808 m, do not `--sync`. Under zero actions it stands with knee RMS 5.3, thigh 2.3 and
+  hip 0.9 N m.
+- `astra` was re-imported with armature 0.015 (estimate).
+- `docs/robot_requirements.md` has the team facts: homing, the knee position limits, moteus
+  gain scales, and the thermal bench test.
+- (c) is set up as `docs/gpu_tasks.md` G3, which Joseph runs: a/b/c = baseline / new stance
+  / new stance plus torques -1.0e-3. If b or c wins, the importer gets a 3-value `--stance`
+  and `astra` is re-imported with it.
+- The no-timeout switch for runs watched by hand is in, and reviewed:
+  `QUADRUPED_NO_TIMEOUT=1`, `train.py`/`evaluate.py --no-timeout`, and
+  `run_stages.sh NO_TIMEOUT=1`. The full `pytest -q` is still to rerun after a WSL restart:
+  the kernel was tainted (BAD_PAGE, ptxjitcompiler segfaults) on the evening of 11-18, and
+  only the 6 test files touched passed (74 tests).
+- G3 done 11-18/11-20, with tour recordings. Metrics script:
+  `/tmp/claude-1000/-home-aimlab-code-quadruped-locomotion/ac9d5b2f-9814-4269-8a08-9504168062a7/scratchpad/gait/gait.py`.
+  - All three trot, track well and never fall.
+  - All three converge on near-straight legs: the calf sits 0.3 to 0.6 rad straighter than
+    the default, the trunk stands at 0.49 to 0.53 m, and the knee swings only 0.24 to 0.39
+    rad. Foot clearance: the 0 to 7 mm first reported was wrong, because gait.py looked
+    up the foot geom without its `robot/` prefix. The corrected figure for B is a median
+    of 23 to 28 mm and a p90 of 35 to 39 mm (`outputs/debug/astra/gait_metrics_B`): low
+    steps, not a shuffle.
+  - C (stance2 plus the torque penalty) uses the least power, 34 W at 1 m/s, against 44 to 46.
+  - R (the first run, armature 0) kept the bent stance (trunk 0.36 to 0.40 m), but it still
+    shuffled.
+  - Cause: the cost. Nothing rewards foot height beyond what's needed on flat ground, and
+    the torque term rewards straight legs.
+    Also, the effort-relative action scale gives only 0.094 rad per action unit at the knee
+    (Go1 0.25).
+  - Implemented on 11-20 (CPU, reviewed, adversarial review: low-severity findings only):
+    - Reward terms foot_clearance, feet_slip, feet_stumble, base_height_band, knee_bend and
+      torques_rated, plus `reward_ramps`, all off by default.
+    - `train.py --preset` with `configs/experiments/astra_{D,E,F,G}.yaml`. The weights are
+      calibrated on B's rollout.
+    - The YAML exponent-float fix, and the PPO step counter restored on resume.
+    - Astra uses `dc_motor` (assumed: 24 V, 0.1 ohm), with friction scale 1.0-1.25 and
+      armature scale 0.5-1.5.
+    - Gait table in recordings, and foot_pos_w in rollouts.
+    - The runs are `docs/gpu_tasks.md` G4.
+    - Dropped: observation delay, because it is redundant with the action delay.
+    - Waiting for the heat test and the winding resistance: the heat budget and electrical
+      power.
+    - Later: a gait clock and a height command.
+  - G4 results, 11-21, seed 0 only, tour recordings:
+    - D: knees bent (calf -1.25 rad), trunk 0.46 m, clearance 72-80 mm, stride 1.0-1.3 Hz.
+      Smooth (jerk 1.4e8, high-frequency torque 0.13). One fall walking backward. Knee RMS
+      9.5-11.5 N m, 85 W at 1 m/s, cost of transport 0.70.
+    - E: FAILED. It ignores forward commands (0.01 m/s when commanded 0.5 and 1.0) but still
+      turns and walks backward. The rated-torque penalty at -0.015, on top of the knee bend
+      floor, outweighs forward tracking. Do not use it.
+    - F: tracks everything with no falls. Knee excursion is the largest (0.52-0.62 rad);
+      knee RMS 8.6-10.6 is the lowest of the walking runs; clearance 74-78 mm, trunk
+      0.47-0.48. But it is jittery (jerk 3.8e8, high-frequency torque 0.26), steps in place
+      when told to stand (clearance 57-71 mm while standing), and draws 95 W at 1 m/s.
+    - Both D and F undershoot 0.5 m/s (0.34-0.36): the high-step, low-frequency gait.
+      Their cost of transport is about twice G3's, the price of the 7 cm clearance.
+    - Pick for rough terrain: F (`astra_G`). It has the most action authority and knee
+      travel, the lowest knee torque and no falls. Its jitter and stepping in place are the
+      next things to fix: raise action_rate, add a zero-command stand-still term, and
+      consider a 5 cm clearance target on flat ground.
+  - 11-21, Joseph's observation: with the swing-height reward the robots hold only two
+    feet down and lift the other pair high, and perform worse than before. Decision: drop
+    foot_clearance. New presets `astra_H` (F minus foot_clearance) and `astra_H_rough`;
+    both dry-run checked. Runs are `docs/gpu_tasks.md` G5.
+  - 11-21, Joseph: F is much more jittery; he proposed a normalized joint-impulse term
+    against the jitter and the stiff knees. Added:
+    - `torque_rate`: sum of ((tau_t - tau_t-1) / tau_ref)^2, a stateful term that gives 0
+      after a reset;
+    - `feet_impact`: sum of (max(0, |Fz| - k mg/4) / mg)^2;
+    - `foot_force_w` in rollouts.
+    Preset `astra_I` = H + torque_rate -0.02 (ramped from 25% over iterations 100-500) +
+    feet_impact -2.0 at k=3, plus `astra_I_rough`. Calibrated on F against B: torque_rate
+    costs 0.20 on F and 0.03 on B. k=3 because a trotting stance foot carries about 0.5 mg,
+    and k=1.5 penalized normal support. pytest 136 passed; CPU smoke OK. Adversarial review:
+    nothing medium or above. Low: torque_rate goes stale if its weight is ever 0, so never
+    ramp it from start_scale 0; feet_impact sees only the last substep's force; it uses
+    the nominal mass.
+  - Low-severity follow-ups from the review:
+    1. foot_pos_w is in foot_geoms order but foot_contact is in the model's order. They
+       match on Astra; reorder through sensor.primary_names.
+    2. Ramping foot_clearance from 0 leaves its touchdown buffer stale.
+    3. Check continuous_torque > 0.
+    4. stumble should get a minimum force.
+    5. motor_strength does not scale saturation_effort; with dc_motor, values above 1 have
+       no effect.
+  - The full astra_D CPU smoke could not finish: WSL went into its fault state on the
+    evening of 11-20.
+- Open with the team: whether the kp ceiling of 318 is in N m/rad or N m/rev. 318 = 2 pi x
+  50.6, and in N m/rev the knee's kp 80 would exceed it.
+
+- [ ] **P2.1 Import the URDF.** Done apart from the armature. The gains, knee range,
+  friction and masses are confirmed by the team answers above, and PPO walks on this
+  import. Next is a re-import with the estimated armature of 0.015, and again once the
+  measured rotor inertia arrives. There is no SuperMimic side yet. Command: the
+  provisional one in Work in flight plus `--armature 0.015`.
   Guide: `docs/robot_import.md`.
 - [ ] **P2.2 Take the measurements** in `docs/measurement_protocol.md` (mass, centre of
   mass, tilt test, pendulum swings) and store them under `data/sysid/`. Bench work for

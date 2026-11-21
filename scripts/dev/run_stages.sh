@@ -10,14 +10,22 @@
 # group killed, when its log has not grown for HANG_S seconds AND the GPU memory in use is
 # below HANG_GPU_MIB (every observed hang happened before CUDA init; legitimate quiet
 # periods such as video rendering or a cold torch.compile hold GPU memory). If nvidia-smi
-# fails, only the hard limit ATTEMPT_LIMIT_S applies.
+# fails, only the hard limit ATTEMPT_LIMIT_S applies. HANG_S=0 or ATTEMPT_LIMIT_S=0
+# disables that check.
+#
+# NO_TIMEOUT=1 is for runs watched by hand, where importing packages and first-time kernel
+# compilation can be silent for many minutes: no hang kill, no hard limit, and the stages
+# get QUADRUPED_NO_TIMEOUT=1 and STALL_TIMEOUT_S=0 (no stall kill or stack dumps inside
+# train.py, evaluate.py, ...). The GPU-lost check below stays on: that is a failure.
+#
+#   NO_TIMEOUT=1 scripts/dev/run_stages.sh [log_dir]
 #
 # Under WSL the GPU passthrough is checked before each attempt and at every poll. When it
 # is lost the run stops at once with exit code 3 and the time of the loss in the log,
 # since no retry can succeed until WSL is restarted.
 #
 # Settings (environment): STAGES, ATTEMPTS (5), HANG_S (300), HANG_GPU_MIB (300),
-# POLL_S (20), ATTEMPT_LIMIT_S (3000), PIPELINE_ID (smoke_local), and STAGE_CMD: a shell
+# POLL_S (20), ATTEMPT_LIMIT_S (3000), NO_TIMEOUT (0), PIPELINE_ID (smoke_local), and STAGE_CMD: a shell
 # command run instead of the real stage, with $STAGE set (for testing this driver).
 source ~/miniconda3/etc/profile.d/conda.sh; conda activate mujoco
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -29,6 +37,11 @@ HANG_S="${HANG_S:-300}"
 HANG_GPU_MIB="${HANG_GPU_MIB:-300}"
 POLL_S="${POLL_S:-20}"
 ATTEMPT_LIMIT_S="${ATTEMPT_LIMIT_S:-3000}"
+if [[ "${NO_TIMEOUT:-0}" == "1" ]]; then
+  HANG_S=0; ATTEMPT_LIMIT_S=0
+  export QUADRUPED_NO_TIMEOUT=1 STALL_TIMEOUT_S=0
+  echo "NO_TIMEOUT=1: no hang kill, no hard limit, no stall timeout in the stages (GPU-lost check stays on)"
+fi
 
 # Total GPU memory in use, in MiB; empty if nvidia-smi fails.
 gpu_mib() {
@@ -67,7 +80,7 @@ run_attempt() {
   while kill -0 "$pid" 2>/dev/null; do
     sleep 1
     now=$(date +%s)
-    if (( now - start >= ATTEMPT_LIMIT_S )); then
+    if (( ATTEMPT_LIMIT_S > 0 && now - start >= ATTEMPT_LIMIT_S )); then
       echo "!!!! stage $stage attempt $attempt: hard limit of $ATTEMPT_LIMIT_S s reached; killing" | tee -a "$log"
       kill_group "$pid"; break
     fi
@@ -77,6 +90,7 @@ run_attempt() {
       echo "!!!! GPU LOST at $(date +%H:%M:%S), $((now - start)) s into stage $stage attempt $attempt; killing its process group" | tee -a "$log"
       GPU_LOST=1; kill_group "$pid"; break
     fi
+    (( HANG_S > 0 )) || continue                    # hang check disabled
     size=$(stat -c %s "$log" 2>/dev/null || echo 0)
     if [[ "$size" != "$last_size" ]]; then last_size=$size; last_growth=$now; continue; fi
     quiet=$((now - last_growth))
