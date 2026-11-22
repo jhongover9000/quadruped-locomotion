@@ -112,12 +112,15 @@ def load_preset(name: str) -> dict[str, Any]:
 
     Keys (all optional): ``task:`` {dotted key: value} overrides, applied before --set (so
     --set wins); ``task_name:``, ``robot:``, ``algo:`` the task, robot and algorithm used
-    when --task, --robot, --algo are not given on the command line.
+    when --task, --robot, --algo are not given on the command line; ``algo_set:`` {dotted
+    key: value} algorithm config overrides (e.g. max_iterations), applied before --algo-set,
+    --num-envs and --max-iterations (so those win).
     """
     cfg = load_group("experiments", name)
-    unknown = set(cfg) - {"task", "task_name", "robot", "algo"}
+    unknown = set(cfg) - {"task", "task_name", "robot", "algo", "algo_set"}
     if unknown:
         raise ValueError(f"Preset '{name}': unknown keys {sorted(unknown)}")
-    if not isinstance(cfg.get("task") or {}, dict):
-        raise TypeError(f"Preset '{name}': 'task' must map dotted keys to values")
+    for key in ("task", "algo_set"):
+        if not isinstance(cfg.get(key) or {}, dict):
+            raise TypeError(f"Preset '{name}': '{key}' must map dotted keys to values")
     return cfg

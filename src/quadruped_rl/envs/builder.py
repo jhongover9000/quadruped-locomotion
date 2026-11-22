@@ -37,7 +37,7 @@ from quadruped_rl.envs import terminations as term_terms
 from quadruped_rl.envs.base import QuadrupedEnv
 from quadruped_rl.envs.commands import COMMAND_NAME, make_velocity_command
 from quadruped_rl.envs.domain_randomization import action_delay_lag, make_events
-from quadruped_rl.envs.terrain import make_terrain, uses_generator
+from quadruped_rl.envs.terrain import make_terrain, terrain_levels_vel, uses_generator
 
 HEIGHT_SCAN_RANGE = 5.0  # m, max ray distance; scan values are divided by this
 
@@ -298,8 +298,10 @@ def make_env_cfg(robot, task: dict, num_envs: int, play: bool = False,
         observations["actor"].enable_corruption = False
     curriculum = {}
     if generator and not play:
+        promote = bool((task.get("curriculum") or {}).get("promote_requires_timeout", False))
         curriculum["terrain_levels"] = CurriculumTermCfg(
-            func=velocity_mdp.terrain_levels_vel, params={"command_name": COMMAND_NAME})
+            func=terrain_levels_vel,
+            params={"command_name": COMMAND_NAME, "promote_requires_timeout": promote})
     rewards = make_rewards(task, robot)
     if not play:                                # play/evaluation uses the full weights
         curriculum.update(make_reward_ramps(task, rewards))

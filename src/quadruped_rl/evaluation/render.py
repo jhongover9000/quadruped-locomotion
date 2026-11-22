@@ -570,6 +570,17 @@ def format_summary(s: dict, meta: dict) -> str:
             re_ = f"{c['root_pos_err_m']:.3f}" if c["root_pos_err_m"] is not None else "-"
             lines.append(f"  {i:<6}{c['clip'][:42]:<44}{c['falls']:>6}{ff:>12}{jr:>12}{re_:>11}")
         lines = [x for i, x in enumerate(lines) if x != "" or (i > 0 and lines[i - 1] != "")]
+    tiles = meta.get("terrain_tiles")
+    if tiles:
+        falls = s.get("falls_per_robot") or []
+        lines += ["", "Spawn tiles (sub-terrain each robot started on; slope for slope tiles):",
+                  f"  {'robot':<6}{'tile':>8}  {'type':<22}{'difficulty':>10}{'slope':>9}{'falls':>7}"]
+        for t in tiles:
+            n = t["robot"]
+            slope = f"{t['slope_deg']:.1f} deg" if t.get("slope_deg") is not None else "-"
+            fl = falls[n] if n < len(falls) else "-"
+            lines.append(f"  {n:<6}{t['row']:>4},{t['col']:<3}  {t['type']:<22}{t['difficulty']:>10.2f}"
+                         f"{slope:>9}{fl:>7}")
     m = s["metrics_mean_over_robots_without_falls"]
     if m:
         lines += ["", (f"Smoothness and efficiency (mean over {s['robots_without_falls']} robots "

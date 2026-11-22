@@ -18,6 +18,14 @@ terrain:
     hf_pyramid_slope_inv: {proportion: 0.1, slope_range: [0.0, 1.0]}
     random_rough: 0.1
     wave_terrain: 0.1
+  # play.py / record.py: a 5 x 5 grid of random sub-terrains, each with a difficulty drawn
+  # uniformly from this range (difficulty scales each preset's range, e.g. slope_range).
+  play_difficulty_range: [0.0, 1.0]
+
+curriculum:
+  # false: promote on distance alone (mjlab), so a robot that slides more than half a tile
+  # and then falls still moves up. true: it must also reach the time-out without a fall.
+  promote_requires_timeout: false
 
 observations:
   critic: [base_lin_vel, base_ang_vel, projected_gravity, velocity_command, joint_pos_rel,

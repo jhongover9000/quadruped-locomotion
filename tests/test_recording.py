@@ -163,3 +163,18 @@ def test_gait_metrics():
     g = render.summarize(rollout, meta)["segments"][0]["gait"]
     assert g["clearance_mm_median"] is None and g["stride_hz"] == pytest.approx(2.0, rel=0.05)
     render.format_summary(render.summarize(rollout, meta), meta)
+
+
+def test_summary_lists_spawn_tiles():
+    rollout, meta = fake_rollout(fall_robot=2)
+    assert "Spawn tiles" not in render.format_summary(render.summarize(rollout, meta), meta)
+    meta["terrain_tiles"] = [
+        {"robot": 0, "row": 0, "col": 1, "type": "flat", "difficulty": 0.1, "slope_deg": None},
+        {"robot": 1, "row": 2, "col": 3, "type": "hf_pyramid_slope", "difficulty": 0.8, "slope_deg": 25.64},
+        {"robot": 2, "row": 4, "col": 0, "type": "hf_pyramid_slope_inv", "difficulty": 1.0,
+         "slope_deg": 30.96}]
+    text = render.format_summary(render.summarize(rollout, meta), meta).split("Spawn tiles")[1]
+    lines = text.splitlines()
+    assert "hf_pyramid_slope" in lines[3] and "25.6 deg" in lines[3] and lines[3].endswith("0")
+    assert "31.0 deg" in lines[4] and lines[4].endswith("1")              # robot 2 fell once
+    assert "flat" in lines[2] and lines[2].split()[-2] == "-"

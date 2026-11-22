@@ -94,8 +94,10 @@ def interactive(model, rollout: dict, meta: dict, robot: int, speed: float, neig
                     lines.append("*** FELL - robot reset ***")
                 status = (f"{'PAUSED' if state['paused'] else 'playing'}  x{state['speed']:g}   "
                           "[Space] pause  [<- ->] step  [Up/Down] speed  [PgUp/PgDn] robot  [Home] restart")
-                viewer.set_texts([(None, mujoco.mjtGridPos.mjGRID_TOPLEFT, "\n".join(lines), None),
-                                  (None, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, status, None)])
+            # set_texts waits for the render thread, which needs the lock: calling it
+            # inside viewer.lock() deadlocks after a few frames (MuJoCo 3.11).
+            viewer.set_texts([(None, mujoco.mjtGridPos.mjGRID_TOPLEFT, "\n".join(lines), None),
+                              (None, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, status, None)])
             viewer.sync()
             time.sleep(max(0.0, 1 / 60 - (time.perf_counter() - now)))
 

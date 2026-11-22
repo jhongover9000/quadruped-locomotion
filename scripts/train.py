@@ -22,8 +22,8 @@ status.json. Watch progress live with:  tensorboard --logdir outputs
 only what is left of its max_iterations (used by the cluster pipeline in hpc/).
 
 --preset NAME loads configs/experiments/NAME.yaml: task overrides (dotted keys, as with
---set) plus optional default task_name / robot / algo. Explicit --set, --task, --robot
-and --algo win over the preset. The preset name is saved in the run's config.yaml.
+--set) plus optional default task_name / robot / algo and algorithm overrides (algo_set).
+Explicit --set, --algo-set, --max-iterations, --task, --robot and --algo win over the preset. The preset name is saved in the run's config.yaml.
 """
 
 from __future__ import annotations
@@ -175,7 +175,8 @@ def main() -> None:
         if args.algo is None:
             p.error("--algo is required (or --continue-run RUN_DIR, or --list)")
         algo_name, seed = args.algo, args.seed
-        algo_cfg = apply_overrides(load_group("algorithms", algo_name), args.algo_set)
+        algo_cfg = apply_dotted(load_group("algorithms", algo_name), preset.get("algo_set"))
+        algo_cfg = apply_overrides(algo_cfg, args.algo_set)
         if args.num_envs:
             algo_cfg["num_envs"] = args.num_envs
         if args.max_iterations:
