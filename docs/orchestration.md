@@ -503,6 +503,21 @@ Done 11-18 afternoon (CPU, reviewed, adversarial review clean):
     nothing medium or above. Low: torque_rate goes stale if its weight is ever 0, so never
     ramp it from start_scale 0; feet_impact sees only the last substep's force; it uses
     the nominal mass.
+  - G5 results, 11-21 (seed 9070 for both, tour):
+    - H: the best tracking of any Astra run (0.44 m/s at 0.5, 0.94 at 1.0; rmse 0.06-0.13),
+      no falls. Calf -1.05 to -1.13 rad (bent, at stance), knee excursion 0.17-0.37 rad,
+      clearance 26-44 mm, trunk 0.48 m. 66 W at 1 m/s, cost of transport 0.42; jerk 8.3e7,
+      high-frequency torque 0.14 (between B and F).
+    - I: smoother at the joints (jerk 4.0e7, high-frequency torque 0.08, action smoothness
+      0.11 against H's 0.38) and cheaper (53 W, cost of transport 0.36). But the knee
+      stiffens (excursion 0.11-0.25, calf about -1.03), the trunk rocks more in turns and
+      at 1 m/s (roll/pitch rate RMS 0.22-0.26 against 0.17-0.24), and in the final stand it
+      taps its feet (3.7 contact switches/s against 0.4). Joseph judged it more jittery to
+      look at.
+    - Reading: torque_rate smooths the joint torques by letting the trunk absorb the motion
+      and by holding the knee stiffer, which works against the aim.
+    - Pick for rough terrain: H (`astra_H_rough`). If torque_rate is retried, use a lower
+      weight (about -0.005) and add a stand-still term.
   - Low-severity follow-ups from the review:
     1. foot_pos_w is in foot_geoms order but foot_contact is in the model's order. They
        match on Astra; reorder through sensor.primary_names.
@@ -692,3 +707,16 @@ Each gets a spec from the main session, then an implementer, then a diff review.
   23:54, one hour after boot, with only CPU tests run. The review found no serious defect.
   The CPU tests pass on the landed tree. `run_stages.sh` now stops on a lost GPU. Joseph
   gave the phase 4 hardware: Raspberry Pi 4 and moteus r4.11 (decision 7).
+- 2026-11-21 (`346f7109`): replay.py deadlock fixed (set_texts moved out of viewer.lock();
+  verified: 270 frames in 20 s, t advanced). Downhill diagnosis on astra_H_rough
+  (`rough_velocity/20261121_141747_astra_stance2_s9070`): terrain level fell 2.51 -> 1.79,
+  only hf_pyramid_slope climbed (3.6), the _inv, stairs_inv and rough columns fell; play
+  grids reach 45 deg slopes with friction down to 0.3; mjlab promotes on distance even when
+  the episode ends in a fall. Uncommitted: `curriculum.promote_requires_timeout`,
+  `terrain.play_difficulty_range`, `terrain_tiles` in recording meta.json and summary,
+  preset `astra_J_rough` (slopes <= 31 deg, slope tiles 0.2 each, 3000 iterations, rewards
+  unchanged), `algo_set:` in presets, tests/test_terrain.py. Diff reviewed by the main
+  session; tests/test_terrain.py passed once (7 passed in 6.4 s) but the full suite, the sim
+  tests and the CPU smoke are NOT run: WSL wedged (python hangs importing wandb, ps ignores
+  timeout). Next: wsl --shutdown, then pytest -q, pytest -m sim, CPU smoke of astra_J_rough,
+  then the GPU run and a ppo_rslrl cross-check on astra_H_rough.

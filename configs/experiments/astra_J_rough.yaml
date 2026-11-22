@@ -1,0 +1,22 @@
+# astra_J_rough: astra_H_rough with terrain the blind policy can climb and an honest
+# curriculum (11-21). In H_rough (outputs/ppo/rough_velocity/20261121_141747_astra_stance2_s9070)
+# the mean terrain level fell 2.51 -> 1.79 over 1500 iterations; only hf_pyramid_slope
+# climbed, plausibly by sliding down its outward faces past half a tile before falling.
+# Slopes up to 45 deg (rise/run 1.0) exceed what foot friction randomized down to 0.3 can
+# hold. Rewards are unchanged, so this run isolates the terrain and curriculum effect.
+#   python scripts/train.py --algo ppo --preset astra_J_rough
+inherit: experiments/astra_H_rough.yaml
+algo_set:
+  max_iterations: 3000
+task:
+  # Difficulty scales slope_range linearly, so the steepest tile (training and play) is
+  # atan(0.6) = 31 deg.
+  terrain.sub_terrains.flat: 0.1
+  terrain.sub_terrains.pyramid_stairs.proportion: 0.15
+  terrain.sub_terrains.pyramid_stairs_inv.proportion: 0.15
+  terrain.sub_terrains.hf_pyramid_slope: {proportion: 0.2, slope_range: [0.0, 0.6]}
+  terrain.sub_terrains.hf_pyramid_slope_inv: {proportion: 0.2, slope_range: [0.0, 0.6]}
+  terrain.sub_terrains.random_rough: 0.1
+  terrain.sub_terrains.wave_terrain: 0.1
+  terrain.play_difficulty_range: [0.0, 1.0]
+  curriculum.promote_requires_timeout: true   # a fall is never a promotion

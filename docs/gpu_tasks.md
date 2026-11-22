@@ -171,7 +171,10 @@ Give Claude the run folders; it compares them and picks the next step.
 
 ## G5. Astra: no swing-height reward, plus joint-impulse penalties (presets I, H)
 
-Status: [ ] not run. Run folders: I ... / I_rough ... / H (optional) ...
+Status: H and I done 11-21 (seed 9070 for both), tours recorded. Rough terrain not run.
+Run folders: H `flat_velocity/20261121_121251_astra_stance2_s9070`, I
+`flat_velocity/20261121_130016_astra_stance2_s9070`.
+Verdict (Claude, 11-21): H goes to rough terrain (`astra_H_rough`); see `docs/orchestration.md`.
 
 Why:
 - With the swing-height reward (D, F), the policies make long, high airborne steps on

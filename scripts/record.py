@@ -22,7 +22,8 @@ Writes a recording directory (default <run>/recordings/<time>_<scenario>/):
 
     video.mp4       follow camera, command/actual readout, velocity arrows, fall banner
     plots.png       velocity tracking, joints, torques vs limits, actions, gait diagram
-    summary.txt     falls, tracking error, torques and gait per segment, smoothness metrics
+    summary.txt     falls, tracking error, torques and gait per segment, smoothness metrics,
+                    each robot's spawn tile on generated terrain (also in meta.json)
     rollout.npz, model.mjb.gz, meta.json   replay offline: python scripts/replay.py <dir>
 
 Runs on the GPU like play.py; rendering is offscreen (no window), so it also works over SSH
@@ -101,6 +102,9 @@ def main() -> None:
         name = "command" if args.command else args.scenario
         print(f"Recording {args.num_envs} robots, scenario '{name}'"
               + (f", checkpoint {run.checkpoint}" if run.checkpoint else ", zero actions"))
+    from quadruped_rl.envs.terrain import spawn_tiles
+
+    tiles = spawn_tiles(run.env)                 # before the rollout: no robot has moved yet
     rollout = record_rollout(run, schedule, duration)
 
     model = run.env.sim.mj_model
@@ -136,6 +140,9 @@ def main() -> None:
         "joint_names": list(run.robot.joint_names), "foot_names": list(run.robot.foot_sites),
         "torque_limits": limits, "command": args.command, "kind": run.kind,
         "continuous_torque": continuous,
+        # Per robot: the sub-terrain tile it spawned on (type, difficulty, slope_deg for
+        # slope tiles); None on flat ground.
+        "terrain_tiles": tiles,
     }
 
     if args.out:
