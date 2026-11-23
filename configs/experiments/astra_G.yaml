@@ -1,0 +1,5 @@
+# astra_G: F on the rough-terrain curriculum. rough_velocity's own changes stay
+# (flat_orientation -0.2, no bad-orientation termination, height scan for the critic);
+# the touchdown-relative foot clearance and the height-above-feet band work on any terrain.
+inherit: experiments/astra_F.yaml
+task_name: rough_velocity

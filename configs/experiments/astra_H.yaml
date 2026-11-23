@@ -1,0 +1,8 @@
+# astra_H: F without the swing-height reward (11-21). With foot_clearance on (D, F), the
+# policies took long, high (~75-80 mm) airborne diagonal pairs, stepped in place when told
+# to stand, undershot 0.5 m/s and doubled the cost of transport. Smaller steps are fine;
+# the knee bend floor and the height band stay, so the legs should not straighten again.
+#   python scripts/train.py --algo ppo --preset astra_H
+inherit: experiments/astra_F.yaml
+task:
+  rewards.foot_clearance: 0.0

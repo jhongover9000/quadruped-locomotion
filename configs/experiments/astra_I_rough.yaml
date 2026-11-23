@@ -1,0 +1,5 @@
+# astra_I_rough: astra_I on the rough-terrain curriculum (rough_velocity keeps its own
+# changes: flat_orientation -0.2, no bad-orientation termination, height scan for the critic).
+#   python scripts/train.py --algo ppo --preset astra_I_rough
+inherit: experiments/astra_I.yaml
+task_name: rough_velocity

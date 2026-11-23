@@ -83,6 +83,23 @@ def make_events(robot, play: bool = False) -> dict[str, EventTermCfg]:
             mode="startup",
             params={"effort_limit_range": tuple(rand["motor_strength"]), "operation": "scale"},
         )
+    # Joint dry friction and reflected rotor inertia: one draw per env and per joint,
+    # multiplying the configured value (actuator.frictionloss / armature, else the model's).
+    joints = SceneEntityCfg("robot", joint_names=(".*",))
+    if "frictionloss_scale" in rand:
+        events["joint_frictionloss"] = EventTermCfg(
+            func=dr.joint_friction,
+            mode="startup",
+            params={"asset_cfg": joints, "operation": "scale",
+                    "ranges": tuple(rand["frictionloss_scale"])},
+        )
+    if "armature_scale" in rand:
+        events["joint_armature"] = EventTermCfg(
+            func=dr.joint_armature,
+            mode="startup",
+            params={"asset_cfg": joints, "operation": "scale",
+                    "ranges": tuple(rand["armature_scale"])},
+        )
     if "encoder_bias" in rand:
         b = float(rand["encoder_bias"])
         events["encoder_bias"] = EventTermCfg(

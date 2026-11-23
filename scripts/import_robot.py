@@ -57,6 +57,19 @@ def _expand(values: list[float] | None) -> list[float] | None:
     return None if values is None else ui._per_joint(values, "option")
 
 
+def parse_joint_ranges(items: list[list[str]]) -> dict[str, tuple[float, float]] | None:
+    """--joint-range KIND LOWER UPPER (repeatable) -> {kind: (lower, upper)}."""
+    out = {}
+    for kind, lo, hi in items or []:
+        if kind in out:
+            raise ui.ImportError_(f"--joint-range {kind} given twice")
+        try:
+            out[kind] = (float(lo), float(hi))
+        except ValueError:
+            raise ui.ImportError_(f"--joint-range {kind} {lo} {hi}: LOWER and UPPER must be numbers (rad)") from None
+    return out or None
+
+
 def resolve_actuator(robot: ui.ImportedRobot, args) -> tuple[dict, list[str]]:
     """PD gains and limits per joint, and where each number came from."""
     joints = [robot.joints[j] for j in ui.JOINT_NAMES]
@@ -94,9 +107,13 @@ def resolve_actuator(robot: ui.ImportedRobot, args) -> tuple[dict, list[str]]:
                      "armature, under joint: in the measurements file")
     friction = [j.frictionloss for j in joints]
     damping = [j.damping for j in joints]
+    continuous = _expand(getattr(args, "continuous_torque", None))
+    if continuous:
+        notes.append("continuous torque: --continuous-torque")
     return ({"kp": kp, "kd": kd, "torque_limit": torque, "velocity_limit": velocity, "armature": armature,
              "frictionloss": friction if any(friction) else None,
-             "viscous_damping": damping if any(damping) else None}, notes)
+             "viscous_damping": damping if any(damping) else None,
+             "continuous_torque": continuous}, notes)
 
 
 def robot_yaml(robot: ui.ImportedRobot, act: dict, q0: list[float], height: float, model_path: str,
@@ -114,10 +131,13 @@ def robot_yaml(robot: ui.ImportedRobot, act: dict, q0: list[float], height: floa
     def opt(values):
         return "null" if values is None else _fmt(_triple(values))
 
+    overrides = "".join(f"\n#   {n}" for n in robot.range_overrides)
+    if overrides:
+        overrides = "\n# Joint ranges set at import, not taken from the URDF:" + overrides
     return f"""# {robot.name}: imported from {source} by scripts/import_robot.py on {datetime.date.today().isoformat()}.
 # Edit numbers here as measurements improve, then run
 #   python scripts/import_robot.py --sync {robot.name}
-# so the SuperMimic side follows. Report: {Path(model_path).parent.parent}/import_report.md
+# so the SuperMimic side follows. Report: {Path(model_path).parent.parent}/import_report.md{overrides}
 name: {robot.name}
 model_path: {model_path}
 
@@ -148,6 +168,7 @@ actuator:
   armature: {_fmt(_triple(act["armature"]))}  # kg*m^2, reflected rotor inertia N^2 * I_rotor
   frictionloss: {opt(act["frictionloss"])}                  # N*m per joint (null keeps the model's value)
   viscous_damping: {opt(act["viscous_damping"])}               # N*m*s/rad per joint
+  continuous_torque: {opt(act.get("continuous_torque"))}             # N*m per joint held continuously (thermal); null: unknown
   params: {{}}
 
 # Ranges for per-environment randomization: what the measurements leave uncertain.
@@ -201,6 +222,9 @@ def report_md(robot: ui.ImportedRobot, act: dict, q0, height, notes: dict, drop:
     for j, q in zip(joints, q0):
         lines.append(f"| {j.name} | {j.urdf_name} | {j.sign:+.0f} | {j.offset:+.4f} | "
                      f"{j.range[0]:+.3f} .. {j.range[1]:+.3f} | {q:+.3f} | {j.offset + j.sign * q:+.3f} |")
+    if robot.range_overrides:
+        lines += ["", "Joint ranges set at import, not taken from the URDF:", ""]
+        lines += [f"- {n}" for n in robot.range_overrides]
     lines += ["", "## Mass", "", "| Body | mass (kg) | COM in the trunk frame, legs straight down (m) | URDF links merged |", "|---|---|---|---|"]
     for b in robot.bodies:
         lines.append(f"| {b.name} | {b.inertia.mass:.4f} | {np.round(b.inertia.com, 4).tolist()} | {', '.join(b.urdf_links)} |")
@@ -269,6 +293,9 @@ def main() -> None:
                    help="folder to search for the URDF's meshes (repeatable; default: around the URDF)")
     p.add_argument("--foot-links", nargs=4, metavar="LINK", help="the four URDF links at the feet (default: found by name)")
     p.add_argument("--foot-radius", type=float, help="m; needed when the URDF feet are not spheres")
+    p.add_argument("--joint-range", nargs=3, action="append", default=[], metavar=("KIND", "LOWER", "UPPER"),
+                   help="replace the URDF's range of every hip, thigh or calf joint (KIND) with LOWER..UPPER, "
+                        "URDF radians, the same numbers on all four legs; e.g. for a continuous knee (repeatable)")
     p.add_argument("--stance", nargs=2, type=float, metavar=("THIGH", "CALF"),
                    help="standing pose in this project's convention, rad (default: feet under the hips "
                         "at --stance-height of the leg length)")
@@ -282,6 +309,9 @@ def main() -> None:
     p.add_argument("--torque-limit", nargs="+", type=float, help="N m (default: URDF <limit effort>)")
     p.add_argument("--velocity-limit", nargs="+", type=float, help="rad/s (default: URDF <limit velocity>)")
     p.add_argument("--armature", nargs="+", type=float, help="kg m^2 (default: measurements file, else 0)")
+    p.add_argument("--continuous-torque", nargs="+", type=float,
+                   help="N m each joint can hold continuously (thermal rating), only reported against "
+                        "(default: kept from the existing config on a re-import, else unknown)")
     p.add_argument("--measurements", type=Path, help="YAML of bench measurements that replace CAD values")
     p.add_argument("--out-dir", type=Path, help="default: assets/robots/<name>")
     p.add_argument("--supermimic-root", help="SuperMimic repository (default: $SUPERMIMIC_ROOT, ../supermimic-quadruped)")
@@ -319,7 +349,8 @@ def run_import(args) -> None:
         meas = yaml.safe_load(args.measurements.read_text()) or {}
 
     robot = ui.import_urdf(args.urdf, name, mesh_dir, mesh_dirs=args.mesh_dir,
-                           foot_links=args.foot_links, foot_radius=args.foot_radius)
+                           foot_links=args.foot_links, foot_radius=args.foot_radius,
+                           joint_ranges=parse_joint_ranges(args.joint_range))
     error = ui.verify_against_urdf(robot, mesh_dir)
     if error > 1e-6:
         raise ui.ImportError_(f"internal check failed: the rebuilt model differs from the URDF by {error:.2e} "
@@ -331,6 +362,12 @@ def run_import(args) -> None:
     if meas.get("com") is not None:
         notes["measurements"].append(ui.match_com(robot, mesh_dir, q0, list(meas["com"])))
     act, notes["actuator"] = resolve_actuator(robot, args)
+    if act["continuous_torque"] is None and cfg_path.exists():      # a re-import keeps the rating
+        old = (yaml.safe_load(cfg_path.read_text()) or {}).get("actuator") or {}
+        kept = old.get("continuous_torque")
+        if kept is not None:
+            act["continuous_torque"] = _expand([kept] * 3 if isinstance(kept, (int, float)) else kept)
+            notes["actuator"].append(f"continuous torque: kept from the previous {cfg_path.name}")
     for jn, a, f, d in zip(ui.JOINT_NAMES, act["armature"], act["frictionloss"] or [0] * 12,
                            act["viscous_damping"] or [0] * 12):
         robot.joints[jn].armature, robot.joints[jn].frictionloss, robot.joints[jn].damping = a, f, d

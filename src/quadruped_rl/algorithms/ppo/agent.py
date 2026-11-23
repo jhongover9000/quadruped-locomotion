@@ -88,6 +88,11 @@ class PPOAgent(Agent):
         actor_obs, critic_obs = obs["actor"].to(self.device), obs["critic"].to(self.device)
         if model.actor_norm.count == 0:
             actor_obs, critic_obs = self._warm_up_normalizers(env, actor_obs, critic_obs, T)
+        if self.iteration > 0 and hasattr(env, "common_step_counter"):
+            # Resumed (--resume / --continue-run): put the env step counter where the run
+            # left off, so step-based curricula (reward_ramps) don't start over. Set after
+            # the reset above, so the terrain curriculum's first-reset freeze still applies.
+            env.common_step_counter = self.iteration * T
         storage = RolloutStorage(N, T, actor_obs.shape[1], critic_obs.shape[1],
                                  model.log_std.shape[0], self.device)
         ep_return = torch.zeros(N, device=self.device)

@@ -1,0 +1,20 @@
+# astra_I: H plus normalized joint-impulse penalties, against jitter and stiff-legged impacts.
+# F (absolute action scale 0.25 rad) is much more jittery than earlier policies: joint_jerk
+# 3.8e8 vs 1.4e8 for D, torque_hf_fraction 0.26 vs 0.13. In joint terms its action_rate
+# penalty is ~2.7x weaker at the knee (0.25 rad per action unit vs 0.094 before).
+# torque_rate penalizes torque changes against the continuous rating; feet_impact penalizes
+# vertical foot loads above 3 x a quarter of the weight (0.75 mg; a trotting
+# stance foot carries ~0.5 mg, so only landing spikes count) (straight legs pass footfall
+# impacts straight into the joints).
+#   python scripts/train.py --algo ppo --preset astra_I
+# Calibrated on F's tour rollout (outputs/ppo/flat_velocity/20261120_225002_astra_stance2_s0;
+# forces from outputs/debug/astra/F_forces) and the smooth run B (gait_metrics_B):
+inherit: experiments/astra_H.yaml
+task:
+  rewards.torque_rate: -0.02              # raw F 9.95 -> 0.20 per step; B 1.36 -> 0.03
+  # An untrained policy pays ~8x its tracking reward in torque_rate: ramp it in from 25% over
+  # iterations 100-500 (24 env steps per iteration) so walking is learned first. start_scale
+  # stays above 0 so the term keeps being evaluated and its last-torque state stays fresh.
+  reward_ramps.torque_rate: {start_steps: 2400, end_steps: 12000, start_scale: 0.25}
+  rewards.feet_impact: -2.0               # raw F 0.081 at k=3 -> 0.16 per step (k=1.5 also hit normal support)
+  reward_params.impact_force_k: 3.0

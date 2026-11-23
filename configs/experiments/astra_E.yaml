@@ -1,0 +1,12 @@
+# astra_E: D, with the effort penalty measured against each motor's continuous rating.
+# The plain torques term (sum tau^2) favours straight legs, where gravity loads the
+# joints least; torques_rated (sum (tau / continuous_torque)^2) is off at the start and
+# ramps in from iteration 300 to 1000, after the gait has formed, so effort is optimized
+# against the thermal limit without undoing the leg shape early on.
+# Iterations to env steps: one PPO iteration = steps_per_env = 24 env steps
+# (algorithms/ppo.yaml), so 300 -> 7200 and 1000 -> 24000.
+inherit: experiments/astra_D.yaml
+task:
+  rewards.torques: 0.0
+  rewards.torques_rated: -0.015           # rollout 7.78 -> 0.117 = 3 x torques (194.5 x 2e-4)
+  reward_ramps.torques_rated: {start_steps: 7200, end_steps: 24000, start_scale: 0.0}

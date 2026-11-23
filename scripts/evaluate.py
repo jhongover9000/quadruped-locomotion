@@ -164,8 +164,12 @@ def main() -> None:
     p.add_argument("--benchmark-envs", type=int, default=1024, help="tracking: envs for the clip benchmark")
     p.add_argument("--out", type=Path, help="CSV with one row per run")
     p.add_argument("--device", default=None)
+    p.add_argument("--no-timeout", action="store_true",
+                   help="no stall stack dumps (sets QUADRUPED_NO_TIMEOUT=1)")
     args = p.parse_args()
 
+    if args.no_timeout:
+        watchdog.disable_timeouts()
     eval_cfg = load_group("eval", args.eval)
     args.num_envs = args.num_envs or int(eval_cfg["episodes_per_seed"])
     args.seeds = args.seeds or len(eval_cfg["seeds"])
