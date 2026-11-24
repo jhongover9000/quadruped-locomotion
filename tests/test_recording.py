@@ -178,3 +178,16 @@ def test_summary_lists_spawn_tiles():
     assert "hf_pyramid_slope" in lines[3] and "25.6 deg" in lines[3] and lines[3].endswith("0")
     assert "31.0 deg" in lines[4] and lines[4].endswith("1")              # robot 2 fell once
     assert "flat" in lines[2] and lines[2].split()[-2] == "-"
+
+
+def test_summary_lists_spawn_tiles_of_every_robot():
+    """All 16 robots of a 16-robot recording appear in the Spawn tiles block."""
+    rollout, meta = fake_rollout()
+    n = 16
+    rollout = {k: (np.repeat(v[:, :1], n, axis=1) if isinstance(v, np.ndarray) and v.ndim >= 2 else v)
+               for k, v in rollout.items()}
+    meta["terrain_tiles"] = [{"robot": i, "row": i % 5, "col": i // 5, "type": "flat",
+                              "difficulty": 0.5, "slope_deg": None} for i in range(n)]
+    text = render.format_summary(render.summarize(rollout, meta), meta).split("Spawn tiles")[1]
+    listed = [int(line.split()[0]) for line in text.splitlines()[2:] if line.strip()[:1].isdigit()]
+    assert listed == list(range(n))

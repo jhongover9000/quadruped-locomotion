@@ -1,0 +1,45 @@
+# Beacon field: a wide procedural field of rocky, hilly ground with friction patches,
+# never seen in training. Each robot walks from its start to a goal point (an emergency
+# beacon) with a shared homing controller. Held out for evaluation only.
+#
+# The field is fixed by `seed` below; the episode seeds (--seeds, default default_seeds)
+# only choose the start and goal pairs and the sim seed.
+kind: beacon
+seed: 3001                  # field geometry and tile friction
+field_size_m: 60.0
+tile_size_m: 6.0            # one heightfield geom (and one friction) per tile
+hfield_resolution_m: 0.1
+border_width_m: 10.0
+default_seeds: [1000, 1001, 1002]   # disjoint from training run seeds (0..99)
+
+field:
+  hill_wavelengths_m: [16.0, 8.0]   # value-noise octaves (amplitude halves per octave)
+  max_slope_deg: 17.0               # hills are rescaled so their steepest slope is this
+  texture_wavelengths_m: [1.0, 0.4] # rocky texture octaves
+  texture_weights: [0.6, 0.4]
+  texture_amplitude_m: 0.03         # texture stays within +- this
+  rocks_per_100m2: 3.0              # smooth bumps merged into the heightfield
+  rock_height_m: [0.05, 0.12]
+  rock_radius_m: [0.2, 0.4]
+  friction_range: [0.4, 1.0]        # per tile, uniform
+  low_friction_share: 0.1           # this fraction of tiles is drawn from low_friction_range
+  low_friction_range: [0.3, 0.4]
+
+episodes:
+  goal_distance_m: 20.0
+  margin_m: 3.0                     # starts and goals stay this far inside the field
+  min_start_separation_m: 5.0
+  start_facing_goal: true
+
+controller:                 # homing: e = bearing to goal - yaw; wz = k_yaw e; vx = v_max max(0, cos e)
+  v_max: 0.8                # m/s, clipped to the policy's trained lin_vel_x range
+  k_yaw: 1.5                # 1/s
+  wz_max: 1.0               # rad/s
+  slow_radius_m: 1.5        # vx falls linearly to 0 at the goal inside this radius
+
+outcome:
+  goal_radius_m: 0.5
+  time_limit_extra_s: 10.0  # time limit = 3 x goal distance / v_max + this
+  time_limit_factor: 3.0
+  stuck_window_s: 10.0      # stuck: less than stuck_progress_m closer to the goal in this window
+  stuck_progress_m: 0.5

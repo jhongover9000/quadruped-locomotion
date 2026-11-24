@@ -74,8 +74,12 @@ def make_terrain(terrain_cfg: dict, play: bool = False) -> TerrainEntityCfg:
     kind = terrain_cfg.get("type", "flat")
     if kind == "flat":
         return TerrainEntityCfg(terrain_type="plane")
+    if kind == "course":                        # evaluation course (envs/courses.py)
+        from quadruped_rl.envs.courses import make_course_terrain
+
+        return make_course_terrain(terrain_cfg)
     if kind != "curriculum":
-        raise ValueError(f"Unknown terrain type '{kind}' (expected flat or curriculum)")
+        raise ValueError(f"Unknown terrain type '{kind}' (expected flat, curriculum or course)")
 
     sub_terrains = {n: _sub_terrain(n, s) for n, s in terrain_cfg["sub_terrains"].items()}
     generator = TerrainGeneratorCfg(
@@ -96,7 +100,7 @@ def make_terrain(terrain_cfg: dict, play: bool = False) -> TerrainEntityCfg:
 
 
 def uses_generator(terrain_cfg: dict) -> bool:
-    return terrain_cfg.get("type", "flat") == "curriculum"
+    return terrain_cfg.get("type", "flat") in ("curriculum", "course")
 
 
 # ---- curriculum -----------------------------------------------------------------------

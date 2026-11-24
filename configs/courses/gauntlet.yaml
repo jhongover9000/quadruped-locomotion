@@ -1,0 +1,52 @@
+# Gauntlet: a straight track along +x of back-to-back sections, one challenge each.
+# One identical lane per robot (num_envs lanes side by side in y). Held out for
+# evaluation only (scripts/course.py); never trained on.
+#
+# Section types and their parameters (every section also takes length_m, friction, label):
+#   flat
+#   ramp     angle_deg (positive up); length_m is the horizontal length
+#   stairs   n, rise_m, tread_m, direction up|down; length is n x tread_m. Each tread
+#            starts with its riser, so the first step is at the section's start.
+#   curb     height_m, direction up|down; the step is at the section's start
+#   rough    amplitude_m (uniform noise in +-amplitude), cell_m (noise grid spacing)
+#   blocks   h_max_m (block heights uniform in 0..h_max above the section), block_m
+#   wave     amplitude_m, wavelength_m (length_m must be a whole number of wavelengths)
+# The track is continuous except at stairs, curbs and blocks.
+kind: gauntlet
+seed: 2001                 # rough and blocks geometry (the same in every lane)
+lane_width_m: 2.0
+spawn_x_m: 1.0             # robots start this far into the first section, facing +x
+finish_margin_m: 1.0       # finish line: this far before the end of the last section
+hfield_resolution_m: 0.05  # wave sections
+border_width_m: 10.0       # flat ground around the whole course (mjlab terrain border)
+time_limit_factor: 3.0     # time limit = factor x course length / speed
+default_seeds: [1000]      # sim seeds; disjoint from training run seeds (0..99)
+
+controller:                # lane following: vx = speed, vy = -k_y * lateral error, wz = k_yaw * heading error
+  speed: 0.8               # m/s (--speed), clipped to the policy's trained lin_vel_x range
+  k_y: 1.0                 # 1/s
+  vy_max: 0.3              # m/s
+  k_yaw: 1.5               # 1/s
+  wz_max: 0.8              # rad/s
+
+sections:
+  - {type: flat,   length_m: 3.0, friction: 1.0,  label: start}
+  - {type: flat,   length_m: 4.0, friction: 0.35, label: low friction}
+  - {type: ramp,   length_m: 4.0, angle_deg: 10,  label: incline 10}
+  - {type: flat,   length_m: 1.5,                 label: top 10}
+  - {type: ramp,   length_m: 4.0, angle_deg: -10, label: decline 10}
+  - {type: rough,  length_m: 5.0, amplitude_m: 0.03, cell_m: 0.1, label: rough}
+  - {type: stairs, n: 5, rise_m: 0.08, tread_m: 0.30, direction: up,   label: stairs up}
+  - {type: flat,   length_m: 1.5,                 label: stairs landing}
+  - {type: stairs, n: 5, rise_m: 0.08, tread_m: 0.30, direction: down, label: stairs down}
+  - {type: ramp,   length_m: 3.0, angle_deg: 20,  label: incline 20}
+  - {type: flat,   length_m: 1.5,                 label: top 20}
+  - {type: ramp,   length_m: 3.0, angle_deg: -20, label: decline 20}
+  - {type: blocks, length_m: 4.0, block_m: 0.4, h_max_m: 0.06, label: blocks}
+  - {type: curb,   length_m: 0.5, height_m: 0.10, direction: up,   label: curb up}
+  - {type: flat,   length_m: 2.0,                 label: curb top}
+  - {type: curb,   length_m: 0.5, height_m: 0.10, direction: down, label: curb down}
+  - {type: ramp,   length_m: 4.0, angle_deg: 10,  friction: 1.0, label: approach 10}
+  - {type: ramp,   length_m: 4.0, angle_deg: -10, friction: 0.4, label: slippery decline}
+  - {type: wave,   length_m: 4.0, amplitude_m: 0.05, wavelength_m: 1.0, label: wave}
+  - {type: flat,   length_m: 3.0,                 label: finish}

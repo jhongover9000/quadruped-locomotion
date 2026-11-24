@@ -60,6 +60,11 @@ def cost_of_transport(torques: np.ndarray, joint_vel: np.ndarray, base_vel_xy: n
     return float(np.mean(power) / (mass * G * mean_speed))
 
 
+def mechanical_energy(torques: np.ndarray, joint_vel: np.ndarray, dt: float) -> float:
+    """Integral of sum_j |tau_j qd_j| over the rollout [T, n_joints], J."""
+    return float(np.sum(np.abs(np.asarray(torques) * np.asarray(joint_vel))) * dt)
+
+
 def velocity_tracking_error(command_xy: np.ndarray, base_vel_xy: np.ndarray) -> float:
     """RMS error between commanded and actual planar base velocity, m/s."""
     err = np.asarray(command_xy) - np.asarray(base_vel_xy)

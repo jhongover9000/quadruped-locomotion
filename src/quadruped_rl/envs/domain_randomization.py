@@ -16,7 +16,9 @@ from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 
 
-def make_events(robot, play: bool = False) -> dict[str, EventTermCfg]:
+def make_events(robot, play: bool = False, fixed_reset: bool = False) -> dict[str, EventTermCfg]:
+    """``fixed_reset`` (evaluation courses): every reset puts the robot exactly at its
+    env origin, facing +x, in the default joint pose."""
     rand = robot.domain_randomization
     events: dict[str, EventTermCfg] = {
         # Spawn at a random position and heading.
@@ -24,8 +26,9 @@ def make_events(robot, play: bool = False) -> dict[str, EventTermCfg]:
             func=mjlab_mdp.reset_root_state_uniform,
             mode="reset",
             params={
-                "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "z": (0.0, 0.02),
-                               "yaw": (-math.pi, math.pi)},
+                "pose_range": {} if fixed_reset else {
+                    "x": (-0.5, 0.5), "y": (-0.5, 0.5), "z": (0.0, 0.02),
+                    "yaw": (-math.pi, math.pi)},
                 "velocity_range": {},
             },
         ),
@@ -33,7 +36,8 @@ def make_events(robot, play: bool = False) -> dict[str, EventTermCfg]:
         "reset_joints": EventTermCfg(
             func=mjlab_mdp.reset_joints_by_offset,
             mode="reset",
-            params={"position_range": (-0.05, 0.05), "velocity_range": (0.0, 0.0),
+            params={"position_range": (0.0, 0.0) if fixed_reset else (-0.05, 0.05),
+                    "velocity_range": (0.0, 0.0),
                     "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
         ),
     }

@@ -114,6 +114,29 @@ python scripts/evaluate.py <run>/ ...                    # shared protocol -> on
 Trainers count iterations differently (PPO: 24 steps in every environment; SuperMimic:
 one), so plots use simulated environment steps on the x-axis.
 
+### Evaluation courses
+
+Two fixed courses, never trained on, compare velocity-command policies (`ppo`, `ppo_rslrl`,
+`amp`, `mpc`) on the same ground: the **gauntlet** (a ~55 m track of sections: low
+friction, 10 and 20 deg ramps, rough, stairs, blocks, curbs, a slippery decline, waves;
+one lane per robot) and the **beacon** field (60 x 60 m of rocky, hilly ground with
+friction patches; each robot walks to a goal 20 m away). The same simple controller turns
+pose and goal into velocity commands for every policy; no domain randomization, no
+observation noise, deterministic actions, and an attempt ends at its first fall.
+Courses are YAML (`configs/courses/`).
+
+```bash
+python scripts/course.py --robot go1 --course gauntlet --preview     # PNGs of the course, no policy
+python scripts/course.py --robot go1 --course beacon --preview
+python scripts/course.py <run A>/ <run B>/ --course gauntlet         # per-section table, side by side
+python scripts/course.py <run>/ --course beacon --seeds 1000 1001 1002
+python scripts/course.py <run>/ --course gauntlet --video --robots 0 3   # + videos, replayable
+```
+
+Output goes to `outputs/courses/<time>_<course>/`: `results.csv` (per robot and section,
+or per attempt), `summary.txt` and `meta.json`. On the CPU (`--device cpu`) use a few
+robots (`--num-envs 2`) and, if needed, `--time-limit`.
+
 ## On the cluster
 
 `hpc/` chains Slurm jobs: environment check, PPO, the MPC baseline, motion library,

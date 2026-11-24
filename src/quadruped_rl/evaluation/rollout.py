@@ -114,12 +114,14 @@ class LoadedRun:
 def load_run(run_dir: Path | None, checkpoint: str | None = None, *, robot_name: str = "go1",
              task_name: str | None = None, num_envs: int = 16, device: str | None = None,
              task_override=None, seed: int | None = None, clips: list[str] | None = None,
-             groups: str | None = None, terminations: bool = True) -> LoadedRun:
+             groups: str | None = None, terminations: bool = True,
+             robot_override=None) -> LoadedRun:
     """Build a play-mode environment and the run's policy (zero actions without a run).
 
     The task comes from the run's saved config unless ``task_name`` names another one of
     the same kind (for example, a flat-ground policy on rough_velocity).
     ``task_override(task) -> task`` edits the task config before the environment is built.
+    ``robot_override(robot) -> robot`` does the same for the robot config.
     For tracking runs, ``clips`` (names) or ``groups`` (manifest groups) choose the motions;
     by default the task's eval_groups, one clip per environment.
     """
@@ -148,6 +150,8 @@ def load_run(run_dir: Path | None, checkpoint: str | None = None, *, robot_name:
         task = other
     if task_override is not None:
         task = task_override(task)
+    if robot_override is not None:
+        robot = robot_override(robot)
 
     if algo_cfg is None:
         if task_kind(task) != "velocity":
@@ -180,12 +184,17 @@ def load_run(run_dir: Path | None, checkpoint: str | None = None, *, robot_name:
 # ---- recording ----------------------------------------------------------------------
 
 def record_rollout(run: LoadedRun, schedule: list[Segment] | None, duration_s: float,
-                   progress: bool = True) -> dict[str, np.ndarray]:
+                   progress: bool = True, controller=None) -> dict[str, np.ndarray]:
     """Step every robot for the schedule's length (or ``duration_s`` without one).
 
     Returns arrays with time along axis 0 and robot along axis 1. Values at step t are read
     after the t-th env.step(), so after a fall ``qpos`` already shows the reset robot and
     ``fell[t]`` marks it.
+
+    A ``controller`` (evaluation/courses.py EnvDriver) replaces the schedule: after the
+    reset ``controller.reset(env)``, before each step ``controller.command(env)`` gives
+    every robot's command [N, 3], and after it ``controller.after_step(env, t)`` returns
+    True to stop early (the rollout is then shorter than ``duration_s``).
     """
     import mujoco
     import torch
@@ -221,12 +230,15 @@ def record_rollout(run: LoadedRun, schedule: list[Segment] | None, duration_s: f
 
     obs_env = run.viewer_env
     run.env.reset()
+    if controller is not None:
+        controller.reset(env)
     with torch.inference_mode():
         for t in range(steps):
             seg = int(np.searchsorted(seg_end, t * dt, side="right")) if schedule else -1
             seg = min(seg, len(schedule) - 1) if schedule else -1
-            if schedule:
-                cmd = torch.tensor(schedule[seg].command, device=env.device)
+            if schedule or controller is not None:
+                cmd = (controller.command(env) if controller is not None else
+                       torch.tensor(schedule[seg].command, device=env.device))
                 term.vel_command_b[:] = cmd
                 term.is_standing_env[:] = False
                 if hasattr(term, "is_world_env"):
@@ -259,12 +271,15 @@ def record_rollout(run: LoadedRun, schedule: list[Segment] | None, duration_s: f
             }
             for k, v in snap.items():
                 log[k].append(v.clone())
+            done = controller is not None and controller.after_step(env, t)
             # Copy to the CPU in chunks to keep GPU memory flat on long rollouts.
-            if (t + 1) % 250 == 0 or t == steps - 1:
+            if (t + 1) % 250 == 0 or t == steps - 1 or done:
                 for k, v in log.items():
                     log[k] = [_to_numpy(x) for x in v]
                 if progress:
                     print(f"  recorded {t + 1}/{steps} steps ({(t + 1) * dt:.1f} s)", flush=True)
+            if done:
+                break
 
     out = {k: np.stack([_to_numpy(x) for x in v]) for k, v in log.items()}
     out["dt"] = np.float32(dt)

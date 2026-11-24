@@ -154,6 +154,36 @@ def add_velocity_arrows(scene, rollout: dict, t: int, robot: int) -> None:
     add_arrow(scene, base + [0, 0, 0.02], base + [0, 0, 0.02] + act, ACT_RGBA)
 
 
+GOAL_RGBA = (1.0, 0.25, 0.1, 0.85)      # course recordings: the robot's goal (beacon)
+PATH_RGBA = (1.0, 0.85, 0.1, 0.9)       # and the path walked so far
+PATH_STRIDE = 10                        # control steps between path points
+
+
+def add_course_markers(scene, rollout: dict, meta: dict, t: int, robot: int) -> None:
+    """Beacon recordings (meta["goals_w"]): a pole on the robot's goal and its path so far."""
+    import mujoco
+
+    goals = meta.get("goals_w")
+    if not goals:
+        return
+    g = np.asarray(goals[robot], float)
+    if scene.ngeom < scene.maxgeom:
+        geom = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(geom, mujoco.mjtGeom.mjGEOM_CYLINDER, np.array([0.5, 0.5, 0.01]),
+                            g + [0, 0, 0.01], np.eye(3).ravel(), np.asarray(GOAL_RGBA, np.float32))
+        scene.ngeom += 1
+    add_arrow(scene, g, g + [0, 0, 1.5], GOAL_RGBA, width=0.03)
+    pts = rollout["qpos"][: t + 1: PATH_STRIDE, robot, :3]
+    for a, b in zip(pts[:-1], pts[1:]):
+        if scene.ngeom >= scene.maxgeom - 1:
+            break
+        geom = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(geom, mujoco.mjtGeom.mjGEOM_LINE, np.zeros(3), np.zeros(3),
+                            np.zeros(9), np.asarray(PATH_RGBA, np.float32))
+        mujoco.mjv_connector(geom, mujoco.mjtGeom.mjGEOM_LINE, 3.0, a - [0, 0, 0.25], b - [0, 0, 0.25])
+        scene.ngeom += 1
+
+
 def hud_lines(rollout: dict, meta: dict, t: int, robot: int) -> list[str]:
     cmd = rollout["command"][t, robot]
     v, w = rollout["base_lin_vel_b"][t, robot], rollout["base_ang_vel_b"][t, robot]
@@ -172,8 +202,10 @@ def hud_lines(rollout: dict, meta: dict, t: int, robot: int) -> list[str]:
             "blue ghost = reference motion;  arrows: blue = reference velocity, cyan = actual",
         ]
     seg = segment_at(meta, t)
+    where = seg["label"] if seg else ("course: " + meta["course"] if meta.get("course")
+                                      else "task commands (random)")
     return head + [
-        f"segment: {seg['label'] if seg else 'task commands (random)'}",
+        f"segment: {where}",
         f"command  vx {cmd[0]:+.2f}  vy {cmd[1]:+.2f}  wz {cmd[2]:+.2f}",
         f"actual   vx {v[0]:+.2f}  vy {v[1]:+.2f}  wz {w[2]:+.2f}",
         "arrows: blue = command, cyan = actual;  ghosts = nearby robots",
@@ -217,6 +249,7 @@ class RolloutRenderer:
                       self.neighbors)
         if self.arrows:
             add_velocity_arrows(scene, self.rollout, t, robot)
+        add_course_markers(scene, self.rollout, self.meta, t, robot)
         img = self.renderer.render()
         return self._overlay(img, t, robot) if self.hud else img
 
