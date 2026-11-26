@@ -1,0 +1,105 @@
+# Graded gauntlet: one mixed track whose levels get harder. Every level L1..L5 holds, in
+# this order: low-friction flat, ramp up / top / ramp down, rough, stairs up / landing /
+# stairs down, blocks, curb up / top / curb down, wave. The values are the ladders'
+# (configs/courses/ladders.yaml) levels 1, 2, 3, 4 and 6 (wave: 1-5), so L1-L2 are about
+# the training range and L4-L5 beyond it. The summary gives the furthest level reached.
+# Held out for evaluation only (scripts/course.py --course gauntlet_graded).
+#
+#   level   mu     ramp    rough    stairs   blocks   curb     wave
+#   L1      0.80   5 deg   0.02 m   0.04 m   0.04 m   0.04 m   0.03 m
+#   L2      0.60   10      0.04     0.06     0.06     0.07     0.05
+#   L3      0.45   15      0.06     0.08     0.08     0.10     0.07
+#   L4      0.35   20      0.08     0.10     0.10     0.13     0.09
+#   L5      0.18   30      0.12     0.14     0.15     0.19     0.11
+#
+# Section types and parameters: see gauntlet.yaml.
+kind: gauntlet
+seed: 2201                 # rough and blocks geometry (the same in every lane)
+lane_width_m: 2.0
+spawn_x_m: 1.0
+finish_margin_m: 1.0
+hfield_resolution_m: 0.05
+border_width_m: 10.0
+time_limit_factor: 3.0     # time limit = factor x course length / speed
+default_seeds: [1000]      # sim seeds; disjoint from training run seeds (0..99)
+
+controller:                # lane following, as on the gauntlet
+  speed: 0.8
+  k_y: 1.0
+  vy_max: 0.3
+  k_yaw: 1.5
+  wz_max: 0.8
+
+sections:
+  - {type: flat,   length_m: 3.0, label: start}
+  # ---- L1
+  - {type: flat,   length_m: 3.0, friction: 0.8, label: L1 low friction}
+  - {type: ramp,   length_m: 3.0, angle_deg: 5,  label: L1 ramp up}
+  - {type: flat,   length_m: 1.5,                 label: L1 ramp top}
+  - {type: ramp,   length_m: 3.0, angle_deg: -5, label: L1 ramp down}
+  - {type: rough,  length_m: 3.0, amplitude_m: 0.02, cell_m: 0.1, label: L1 rough}
+  - {type: stairs, n: 4, rise_m: 0.04, tread_m: 0.30, direction: up,   label: L1 stairs up}
+  - {type: flat,   length_m: 1.5,                 label: L1 stairs landing}
+  - {type: stairs, n: 4, rise_m: 0.04, tread_m: 0.30, direction: down, label: L1 stairs down}
+  - {type: blocks, length_m: 3.2, block_m: 0.4, h_max_m: 0.04, label: L1 blocks}
+  - {type: curb,   length_m: 0.5, height_m: 0.04, direction: up,   label: L1 curb up}
+  - {type: flat,   length_m: 2.0,                 label: L1 curb top}
+  - {type: curb,   length_m: 0.5, height_m: 0.04, direction: down, label: L1 curb down}
+  - {type: wave,   length_m: 3.0, amplitude_m: 0.03, wavelength_m: 1.0, label: L1 wave}
+  # ---- L2
+  - {type: flat,   length_m: 3.0, friction: 0.6, label: L2 low friction}
+  - {type: ramp,   length_m: 3.0, angle_deg: 10,  label: L2 ramp up}
+  - {type: flat,   length_m: 1.5,                 label: L2 ramp top}
+  - {type: ramp,   length_m: 3.0, angle_deg: -10, label: L2 ramp down}
+  - {type: rough,  length_m: 3.0, amplitude_m: 0.04, cell_m: 0.1, label: L2 rough}
+  - {type: stairs, n: 4, rise_m: 0.06, tread_m: 0.30, direction: up,   label: L2 stairs up}
+  - {type: flat,   length_m: 1.5,                 label: L2 stairs landing}
+  - {type: stairs, n: 4, rise_m: 0.06, tread_m: 0.30, direction: down, label: L2 stairs down}
+  - {type: blocks, length_m: 3.2, block_m: 0.4, h_max_m: 0.06, label: L2 blocks}
+  - {type: curb,   length_m: 0.5, height_m: 0.07, direction: up,   label: L2 curb up}
+  - {type: flat,   length_m: 2.0,                 label: L2 curb top}
+  - {type: curb,   length_m: 0.5, height_m: 0.07, direction: down, label: L2 curb down}
+  - {type: wave,   length_m: 3.0, amplitude_m: 0.05, wavelength_m: 1.0, label: L2 wave}
+  # ---- L3
+  - {type: flat,   length_m: 3.0, friction: 0.45, label: L3 low friction}
+  - {type: ramp,   length_m: 3.0, angle_deg: 15,  label: L3 ramp up}
+  - {type: flat,   length_m: 1.5,                 label: L3 ramp top}
+  - {type: ramp,   length_m: 3.0, angle_deg: -15, label: L3 ramp down}
+  - {type: rough,  length_m: 3.0, amplitude_m: 0.06, cell_m: 0.1, label: L3 rough}
+  - {type: stairs, n: 4, rise_m: 0.08, tread_m: 0.30, direction: up,   label: L3 stairs up}
+  - {type: flat,   length_m: 1.5,                 label: L3 stairs landing}
+  - {type: stairs, n: 4, rise_m: 0.08, tread_m: 0.30, direction: down, label: L3 stairs down}
+  - {type: blocks, length_m: 3.2, block_m: 0.4, h_max_m: 0.08, label: L3 blocks}
+  - {type: curb,   length_m: 0.5, height_m: 0.1, direction: up,   label: L3 curb up}
+  - {type: flat,   length_m: 2.0,                 label: L3 curb top}
+  - {type: curb,   length_m: 0.5, height_m: 0.1, direction: down, label: L3 curb down}
+  - {type: wave,   length_m: 3.0, amplitude_m: 0.07, wavelength_m: 1.0, label: L3 wave}
+  # ---- L4
+  - {type: flat,   length_m: 3.0, friction: 0.35, label: L4 low friction}
+  - {type: ramp,   length_m: 3.0, angle_deg: 20,  label: L4 ramp up}
+  - {type: flat,   length_m: 1.5,                 label: L4 ramp top}
+  - {type: ramp,   length_m: 3.0, angle_deg: -20, label: L4 ramp down}
+  - {type: rough,  length_m: 3.0, amplitude_m: 0.08, cell_m: 0.1, label: L4 rough}
+  - {type: stairs, n: 4, rise_m: 0.1, tread_m: 0.30, direction: up,   label: L4 stairs up}
+  - {type: flat,   length_m: 1.5,                 label: L4 stairs landing}
+  - {type: stairs, n: 4, rise_m: 0.1, tread_m: 0.30, direction: down, label: L4 stairs down}
+  - {type: blocks, length_m: 3.2, block_m: 0.4, h_max_m: 0.1, label: L4 blocks}
+  - {type: curb,   length_m: 0.5, height_m: 0.13, direction: up,   label: L4 curb up}
+  - {type: flat,   length_m: 2.0,                 label: L4 curb top}
+  - {type: curb,   length_m: 0.5, height_m: 0.13, direction: down, label: L4 curb down}
+  - {type: wave,   length_m: 3.0, amplitude_m: 0.09, wavelength_m: 1.0, label: L4 wave}
+  # ---- L5
+  - {type: flat,   length_m: 3.0, friction: 0.18, label: L5 low friction}
+  - {type: ramp,   length_m: 3.0, angle_deg: 30,  label: L5 ramp up}
+  - {type: flat,   length_m: 1.5,                 label: L5 ramp top}
+  - {type: ramp,   length_m: 3.0, angle_deg: -30, label: L5 ramp down}
+  - {type: rough,  length_m: 3.0, amplitude_m: 0.12, cell_m: 0.1, label: L5 rough}
+  - {type: stairs, n: 4, rise_m: 0.14, tread_m: 0.30, direction: up,   label: L5 stairs up}
+  - {type: flat,   length_m: 1.5,                 label: L5 stairs landing}
+  - {type: stairs, n: 4, rise_m: 0.14, tread_m: 0.30, direction: down, label: L5 stairs down}
+  - {type: blocks, length_m: 3.2, block_m: 0.4, h_max_m: 0.15, label: L5 blocks}
+  - {type: curb,   length_m: 0.5, height_m: 0.19, direction: up,   label: L5 curb up}
+  - {type: flat,   length_m: 2.0,                 label: L5 curb top}
+  - {type: curb,   length_m: 0.5, height_m: 0.19, direction: down, label: L5 curb down}
+  - {type: wave,   length_m: 3.0, amplitude_m: 0.11, wavelength_m: 1.0, label: L5 wave}
+  - {type: flat,   length_m: 3.0, label: finish}

@@ -20,6 +20,8 @@ API errors with their status unreported.
   pasted in.
 - What the real robot needs before it moves (team inputs, hardware, the interface
   numbers, moteus settings, code still to write) is in `docs/robot_requirements.md`.
+- Tasks on Joseph's side (GPU runs, checks, team asks) go in `docs/my_tasks.md` (gitignored);
+  keep it in step with this file.
 - Detail lives in the guides, not here: `docs/robot_import.md`, `docs/measurement_protocol.md`,
   `docs/supermimic.md`, `docs/deployment_checklist.md`, `docs/setup_wsl2.md`, `hpc/README.md`.
 
@@ -531,7 +533,9 @@ Done 11-18 afternoon (CPU, reviewed, adversarial review clean):
 - Open with the team: whether the kp ceiling of 318 is in N m/rad or N m/rev. 318 = 2 pi x
   50.6, and in N m/rev the knee's kp 80 would exceed it.
 
-- [ ] **P2.1 Import the URDF.** Done apart from the armature. The gains, knee range,
+- [ ] **P2.1 Import the URDF.** Done, with the estimated armature 0.015 (both `astra` and
+  `astra_stance2`, randomized x0.5 to x1.5; found 11-25). Re-import once the measured rotor
+  inertia arrives. The gains, knee range,
   friction and masses are confirmed by the team answers above, and PPO walks on this
   import. Next is a re-import with the estimated armature of 0.015, and again once the
   measured rotor inertia arrives. There is no SuperMimic side yet. Command: the

@@ -1,0 +1,85 @@
+# Ladders: one straight track per challenge type, run one ladder at a time with every robot
+# on its own identical lane. Each ladder steps through rising difficulty levels that go past
+# the training range; a robot's score on a ladder is the highest level it fully exits.
+# Held out for evaluation only (scripts/course.py --course ladders [--tracks stairs ...]).
+#
+# A ladder is a template of gauntlet sections (see gauntlet.yaml for the section types) and
+# a list of level values. envs/courses.ladder_course expands it into:
+#   start (start_m flat), then for each level k with value v: the template with $v filled
+#   in, labelled "L<k> <label>", and an "L<k> rest" flat of rest_m (left out when the whole
+#   template is flat, as in friction; a ladder may set its own rest_m), then finish
+#   (finish_m flat).
+# Template values may be "$v" or arithmetic on it: "-$v", "$v * 2", "($v + 0.1) / 2".
+# `unit` is how the summary and profile.png print a level's value (deg, m or mu).
+kind: ladders
+seed: 2101                 # rough and blocks geometry (the same in every lane)
+lane_width_m: 2.0
+spawn_x_m: 1.0             # robots start this far into the start flat, facing +x
+finish_margin_m: 1.0       # finish line: this far before the end of the finish flat
+start_m: 3.0
+rest_m: 1.5
+finish_m: 3.0
+hfield_resolution_m: 0.05
+border_width_m: 10.0
+time_limit_factor: 3.0     # per ladder: factor x ladder length / speed
+default_seeds: [1000]      # sim seeds; disjoint from training run seeds (0..99)
+
+controller:                # lane following, as on the gauntlet
+  speed: 0.8               # m/s (--speed)
+  k_y: 1.0
+  vy_max: 0.3
+  k_yaw: 1.5
+  wz_max: 0.8
+
+outcome:                   # stuck: the furthest x reached grows less than this in the window
+  stuck_window_s: 10.0
+  stuck_progress_m: 0.3
+
+ladders:
+  slope:
+    unit: deg
+    template:
+      - {type: ramp, length_m: 3.0, angle_deg: $v,  label: ramp up}
+      - {type: flat, length_m: 1.5,                 label: top}
+      - {type: ramp, length_m: 3.0, angle_deg: -$v, label: ramp down}
+    levels: [5, 10, 15, 20, 25, 30]
+  stairs:
+    unit: m
+    template:
+      - {type: stairs, n: 4, rise_m: $v, tread_m: 0.30, direction: up,   label: stairs up}
+      - {type: flat, length_m: 1.5,                                      label: landing}
+      - {type: stairs, n: 4, rise_m: $v, tread_m: 0.30, direction: down, label: stairs down}
+    levels: [0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.16]
+  curb:
+    unit: m
+    template:
+      - {type: curb, length_m: 0.5, height_m: $v, direction: up,   label: curb up}
+      - {type: flat, length_m: 2.0,                                label: curb top}
+      - {type: curb, length_m: 0.5, height_m: $v, direction: down, label: curb down}
+    levels: [0.04, 0.07, 0.10, 0.13, 0.16, 0.19]
+  friction:
+    unit: mu
+    template:
+      - {type: flat, length_m: 4.0, friction: $v, label: friction}
+    levels: [0.8, 0.6, 0.45, 0.35, 0.25, 0.18, 0.12]
+  slippery_decline:
+    unit: mu
+    template:
+      - {type: ramp, length_m: 3.0, angle_deg: 10,  friction: 1.0, label: approach}
+      - {type: ramp, length_m: 3.0, angle_deg: -10, friction: $v,  label: slippery decline}
+    levels: [0.6, 0.45, 0.35, 0.25, 0.18]
+  rough:
+    unit: m
+    template:
+      - {type: rough, length_m: 4.0, amplitude_m: $v, cell_m: 0.1, label: rough}
+    levels: [0.02, 0.04, 0.06, 0.08, 0.10, 0.12]
+  blocks:
+    unit: m
+    template:
+      - {type: blocks, length_m: 4.0, block_m: 0.4, h_max_m: $v, label: blocks}
+    levels: [0.04, 0.06, 0.08, 0.10, 0.12, 0.15]
+  wave:
+    unit: m
+    template:
+      - {type: wave, length_m: 4.0, amplitude_m: $v, wavelength_m: 1.0, label: wave}
+    levels: [0.03, 0.05, 0.07, 0.09, 0.11]

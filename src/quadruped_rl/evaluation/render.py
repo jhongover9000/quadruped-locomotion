@@ -204,6 +204,12 @@ def hud_lines(rollout: dict, meta: dict, t: int, robot: int) -> list[str]:
     seg = segment_at(meta, t)
     where = seg["label"] if seg else ("course: " + meta["course"] if meta.get("course")
                                       else "task commands (random)")
+    if meta.get("course_sections"):          # gauntlet recordings: the section the robot is in
+        x = float(rollout["qpos"][t, robot, 0]) - float(meta.get("course_x0", 0.0))
+        secs = meta["course_sections"]
+        sec = next((s for s in secs if x < s["x1"]), secs[-1])
+        where = f"course {meta.get('course', '')}, section {sec['label']}" + (
+            f" (mode {sec['mode']})" if sec.get("mode", "forward") != "forward" else "")
     return head + [
         f"segment: {where}",
         f"command  vx {cmd[0]:+.2f}  vy {cmd[1]:+.2f}  wz {cmd[2]:+.2f}",

@@ -129,3 +129,6 @@ prompting_guide/
 
 # Agent worktrees
 .claude/worktrees/
+
+# Personal task list (docs/my_tasks.md), kept out of git
+docs/my_tasks.md

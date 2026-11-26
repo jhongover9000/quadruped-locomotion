@@ -5,6 +5,9 @@ Two courses, each described by a YAML file in ``configs/courses/``:
 - **gauntlet**: a straight track along +x made of back-to-back sections (flat, ramp,
   stairs, curb, rough, blocks, wave), each with its own friction. One identical lane per
   robot, ``lane_width_m`` wide, side by side in y.
+- **ladders**: one straight gauntlet track per challenge type, whose levels step through
+  rising difficulty. The YAML gives each ladder a template of sections and a list of level
+  values; ``ladder_course`` expands one ladder into an ordinary gauntlet course.
 - **beacon**: a square field of rocky, hilly ground built from square tiles. Every tile is
   its own heightfield geom with its own friction; all tiles sample one global height grid
   and share their edge vertices, so the surface is continuous across tiles.
@@ -25,9 +28,12 @@ differs from training only in its sliding friction.
 
 from __future__ import annotations
 
+import ast
 import copy
 import functools
 import math
+import operator
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,6 +49,13 @@ BASE_DEPTH_M = 0.5               # every geom reaches this far below the course'
 SECTION_TYPES = ("flat", "ramp", "stairs", "curb", "rough", "blocks", "wave")
 JUMP_TYPES = ("stairs", "curb", "blocks")   # vertical edges by design
 
+# Directional gauntlet: the body yaw each section's ``mode`` asks for while the robot travels
+# +x (left: -90 deg, so the robot's left side leads). A spin section turns on the spot by
+# ``spin_deg`` and then goes on forward.
+MODE_YAW_DEG = {"forward": 0.0, "backward": 180.0, "left": -90.0, "right": 90.0,
+                "diag_fl": -45.0, "diag_fr": 45.0, "diag_bl": -135.0, "diag_br": 135.0,
+                "spin": 0.0}
+
 
 # ---- loading ------------------------------------------------------------------------
 
@@ -56,10 +69,14 @@ def load_course(name_or_path: str | Path) -> dict:
     kind = course.get("kind")
     if kind == "gauntlet":
         gauntlet_sections(course)                  # raises on a bad section
+    elif kind == "ladders":
+        for name in ladder_names(course):
+            gauntlet_sections(ladder_course(course, name))
     elif kind == "beacon":
         _beacon_grid_shape(course)
     else:
-        raise ValueError(f"Course '{name_or_path}': kind must be gauntlet or beacon, got {kind!r}")
+        raise ValueError(f"Course '{name_or_path}': kind must be gauntlet, ladders or beacon, "
+                         f"got {kind!r}")
     return course
 
 
@@ -155,6 +172,10 @@ class Section:
     def length(self) -> float:
         return self.x1 - self.x0
 
+    @property
+    def mode(self) -> str:
+        return str(self.params.get("mode", "forward"))
+
 
 _REQUIRED = {"flat": (), "ramp": ("angle_deg",), "stairs": ("n", "rise_m", "tread_m"),
              "curb": ("height_m",), "rough": ("amplitude_m",), "blocks": ("h_max_m", "block_m"),
@@ -199,6 +220,13 @@ def gauntlet_sections(course: dict) -> list[Section]:
         friction = float(spec.get("friction", course.get("default_friction", 1.0)))
         if friction <= 0:
             raise ValueError(f"Section '{label}': friction must be positive")
+        mode = spec.get("mode", "forward")
+        if mode not in MODE_YAW_DEG:
+            raise ValueError(f"Section '{label}': mode must be one of {list(MODE_YAW_DEG)}, got {mode!r}")
+        if mode == "spin" and "spin_deg" not in spec:
+            raise ValueError(f"Section '{label}': a spin section needs spin_deg")
+        if "speed_m_s" in spec and float(spec["speed_m_s"]) <= 0:
+            raise ValueError(f"Section '{label}': speed_m_s must be positive")
         z0 = z
         if kind == "ramp":
             z1 = z0 + length * math.tan(math.radians(float(spec["angle_deg"])))
@@ -224,6 +252,92 @@ def gauntlet_sections(course: dict) -> list[Section]:
 
 def course_length(course: dict) -> float:
     return gauntlet_sections(course)[-1].x1
+
+
+def is_directional(course: dict) -> bool:
+    """A gauntlet whose sections set a ``mode`` or ``speed_m_s`` (gauntlet_directions)."""
+    return any("mode" in s or "speed_m_s" in s for s in course.get("sections") or [])
+
+
+_LEVEL = re.compile(r"^L(\d+) ")
+
+
+def section_level(label: str) -> int | None:
+    """k of a section labelled ``L<k> <part>`` (ladders, graded gauntlet), else None."""
+    m = _LEVEL.match(str(label))
+    return int(m.group(1)) if m else None
+
+
+# ---- ladders ------------------------------------------------------------------------
+
+_OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+        ast.Div: operator.truediv}
+
+
+def _arith(node) -> float:
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return float(node.value)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        v = _arith(node.operand)
+        return -v if isinstance(node.op, ast.USub) else v
+    if isinstance(node, ast.BinOp) and type(node.op) in _OPS:
+        return _OPS[type(node.op)](_arith(node.left), _arith(node.right))
+    raise ValueError("only numbers, $v, + - * / and brackets are allowed")
+
+
+def template_value(value, v: float):
+    """A template field with the level value ``v`` filled in: a string that mentions ``$v``
+    is arithmetic on it ("$v", "-$v", "$v * 2", "($v + 0.1) / 2"); anything else is kept."""
+    if not isinstance(value, str) or "$v" not in value:
+        return value
+    try:
+        return _arith(ast.parse(value.replace("$v", f"({float(v)!r})"), mode="eval").body)
+    except (SyntaxError, ValueError) as e:
+        raise ValueError(f"Ladder template value {value!r}: {e}") from None
+
+
+def ladder_names(course: dict) -> list[str]:
+    ladders = course.get("ladders") or {}
+    if not ladders:
+        raise ValueError("A ladders course needs at least one ladder under `ladders`")
+    return list(ladders)
+
+
+def ladder_course(course: dict, name: str) -> dict:
+    """One ladder of a ``kind: ladders`` course as a gauntlet course.
+
+    The track is a ``start_m`` flat start, then for each level k (value v) the template's
+    sections with ``$v`` filled in and labelled ``L<k> <label>``, each level followed by a
+    ``rest_m`` flat rest (``L<k> rest``) unless every template section is itself flat (as
+    in the friction ladder; a ladder can set ``rest_m`` to override), then a ``finish_m``
+    flat finish. The other course keys (lane width, controller, ...) are kept, and
+    ``course["ladder"]`` records the ladder's name, level values and unit.
+    """
+    ladders = course.get("ladders") or {}
+    if name not in ladders:
+        raise ValueError(f"No ladder '{name}'; the course has {list(ladders)}")
+    lad = ladders[name]
+    template = lad.get("template") or []
+    levels = [float(v) for v in lad.get("levels") or []]
+    if not template or not levels:
+        raise ValueError(f"Ladder '{name}' needs a template and levels")
+    all_flat = all(t.get("type") == "flat" for t in template)
+    rest = float(lad.get("rest_m", 0.0 if all_flat else course.get("rest_m", 1.5)))
+    sections = [{"type": "flat", "length_m": float(course.get("start_m", 3.0)), "label": "start"}]
+    for k, v in enumerate(levels, 1):
+        for t in template:
+            sec = {key: template_value(val, v) for key, val in t.items() if key != "label"}
+            sec["label"] = f"L{k} {t.get('label', t.get('type'))}"
+            sections.append(sec)
+        if rest > 0:
+            sections.append({"type": "flat", "length_m": rest, "label": f"L{k} rest"})
+    sections.append({"type": "flat", "length_m": float(course.get("finish_m", 3.0)),
+                     "label": "finish"})
+    out = {k: copy.deepcopy(v) for k, v in course.items()
+           if k not in ("kind", "ladders", "start_m", "finish_m", "rest_m")}
+    out.update(kind="gauntlet", sections=sections,
+               ladder={"name": name, "levels": levels, "unit": str(lad.get("unit", ""))})
+    return out
 
 
 def nominal_height(sections: list[Section], x) -> np.ndarray:

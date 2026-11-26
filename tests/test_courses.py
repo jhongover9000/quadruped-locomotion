@@ -415,6 +415,351 @@ def test_gauntlet_outcomes_and_results():
     assert "incline 10" in E.compare_gauntlet({"a": rows, "b": rows})
 
 
+def _synthetic_rollout(qpos: np.ndarray, dt: float = 0.02) -> dict:
+    T, n = qpos.shape[:2]
+    return {"qpos": qpos, "dt": np.float32(dt),
+            "torques": np.ones((T, n, 12), np.float32), "joint_vel": np.ones((T, n, 12), np.float32),
+            "base_lin_vel_b": np.tile(np.array([1.0, 0, 0], np.float32), (T, n, 1)),
+            "foot_vel_w": np.zeros((T, n, 4, 3), np.float32), "foot_contact": np.ones((T, n, 4), bool)}
+
+
+def _drive(ctrl, x_of_t, fell_at=None, T=4000, dt=0.02):
+    """Step ``ctrl`` with robots at course coordinates x_of_t(t) [N] (lane centre, yaw 0);
+    fell_at: {robot: step}. Returns the rollout of the steps taken."""
+    n = len(ctrl.lane_y)
+    qpos = np.zeros((T, n, 19), np.float32)
+    qpos[..., 3] = 1.0
+    qpos[:, :, 1] = np.array(ctrl.lane_y)[None]
+    z = np.zeros(n, bool)
+    for t in range(T):
+        qpos[t, :, 0] = ctrl.x0 + x_of_t(t)
+        fell = z.copy()
+        for r, tf in (fell_at or {}).items():
+            if t == tf:
+                fell[r] = True
+                qpos[t, r, 0] = ctrl.x0 + 1.0             # the env already reset it
+        if ctrl.update(t, qpos[t, :, :3].astype(float), np.zeros(n), fell, z):
+            break
+    return _synthetic_rollout(qpos[:t + 1], dt)
+
+
+def test_fall_belongs_to_the_furthest_section_entered():
+    """Regression: a robot that climbs onto the curb, tips back off it into the blocks and
+    falls there was counted as a fall in "blocks" (the base x at its last step) while
+    "curb up" showed entered > done with no falls."""
+    course = C.load_course("gauntlet")
+    by = {s.label: s for s in C.gauntlet_sections(course)}
+    ctrl = E.GauntletController(course, 3, RANGES, dt=0.02, time_limit_s=60.0)
+    curb, rough = by["curb up"], by["rough"]
+    t_top = int((curb.x0 + 0.3 - 1.0) / 0.02)           # robot 0 reaches 0.3 m onto the curb
+    t_fall = t_top + 50
+
+    def x_of_t(t):
+        walk = 1.0 + t * 0.02
+        x0 = walk if t <= t_top else curb.x0 + 0.3 - (t - t_top) * 0.02   # then slides back
+        x1 = min(walk, (rough.x0 + rough.x1) / 2)       # robot 1 stops in the rough: timeout
+        return np.array([x0, x1, walk])                 # robot 2 finishes
+
+    rollout = _drive(ctrl, x_of_t, fell_at={0: t_fall})
+    rows, robots = E.gauntlet_results(rollout, ctrl, 10.0, ["FR", "FL", "RR", "RL"])
+    assert robots[0]["fell"] and robots[0]["fall_x_m"] < curb.x0     # the base is back in blocks
+    assert robots[0]["fall_section"] == "curb up" and robots[0]["end_section"] == "curb up"
+    assert robots[1]["status"] == "timeout" and robots[1]["end_section"] == "rough"
+    assert robots[2]["finished"]
+    agg = {a["label"]: a for a in E.aggregate_gauntlet(rows)}
+    assert agg["curb up"]["falls"] == 1 and agg["blocks"]["falls"] == 0
+    assert agg["rough"]["timeouts"] == 1 and agg["rough"]["falls"] == 0
+    for a in agg.values():                              # the rule the summary states
+        assert a["entered"] == a["completed"] + a["falls"] + a["timeouts"], a["label"]
+    text = E.format_gauntlet("test", rows, robots)
+    assert "furthest section it had entered" in text and "t/o" in text
+    # the old CSV rows (no end_section column) give the same counts
+    for r in rows:
+        r.pop("robot_end_section")
+        r["robot_fall_section"] = "blocks" if r["robot"] == 0 else r["robot_fall_section"]
+    agg = {a["label"]: a for a in E.aggregate_gauntlet(rows)}
+    assert agg["curb up"]["falls"] == 1 and agg["blocks"]["falls"] == 0
+
+
+def test_stuck_attempts_end_early():
+    course = dict(C.load_course("gauntlet"), outcome={"stuck_window_s": 2.0, "stuck_progress_m": 0.3})
+    ctrl = E.GauntletController(course, 2, RANGES, dt=0.02, time_limit_s=60.0)
+    rollout = _drive(ctrl, lambda t: np.array([1.0 + min(t * 0.02, 3.0) + 0.2 * (t % 2),
+                                               1.0 + t * 0.02]), T=400)
+    st, end = ctrl.attempts.status, ctrl.attempts.end
+    # furthest x = 1.2 + 0.02 t (odd steps) until it stops at 4.2 (t = 150); the window
+    # of 100 steps first sees less than 0.3 m of progress once x(t - 100) > 3.9: t = 237
+    assert st[0] == "stuck" and end[0] == pytest.approx(237 + 1, abs=1)
+    assert st[1] == "running"
+    del rollout
+
+
+# ---- ladders ------------------------------------------------------------------------------
+
+def test_template_values():
+    assert C.template_value("$v", 0.08) == 0.08
+    assert C.template_value("-$v", 10) == -10.0
+    assert C.template_value("($v + 0.1) * 2", 0.4) == pytest.approx(1.0)
+    assert C.template_value("up", 3) == "up" and C.template_value(4, 3) == 4
+    with pytest.raises(ValueError, match="template value"):
+        C.template_value("__import__('os') or $v", 1)
+
+
+def test_ladder_expansion():
+    course = C.load_course("ladders")
+    names = C.ladder_names(course)
+    assert names == ["slope", "stairs", "curb", "friction", "slippery_decline", "rough",
+                     "blocks", "wave"]
+    for name in names:
+        spec = course["ladders"][name]
+        lc = C.ladder_course(course, name)
+        sections = C.gauntlet_sections(lc)
+        flat = all(t["type"] == "flat" for t in spec["template"])
+        per_level = len(spec["template"]) + (0 if flat else 1)
+        assert len(sections) == 2 + per_level * len(spec["levels"]), name
+        assert sections[0].label == "start" and sections[-1].label == "finish"
+        assert sections[0].length == 3.0 and sections[-1].length == 3.0
+        for k in range(1, len(spec["levels"]) + 1):
+            secs = [s for s in sections if C.section_level(s.label) == k]
+            assert len(secs) == per_level
+            want = [f"L{k} {t['label']}" for t in spec["template"]] + ([] if flat else [f"L{k} rest"])
+            assert [s.label for s in secs] == want
+            if not flat:
+                assert secs[-1].type == "flat" and secs[-1].length == 1.5
+        # back to ground level after every level and at the end
+        assert sections[-1].z_end == pytest.approx(0.0, abs=1e-9), name
+        for s in sections:
+            if s.label.endswith(" rest"):
+                assert s.z_start == pytest.approx(0.0, abs=1e-9), s.label
+        assert lc["ladder"] == {"name": name, "levels": [float(v) for v in spec["levels"]],
+                                "unit": spec["unit"]}
+    by = {s.label: s for s in C.gauntlet_sections(C.ladder_course(course, "stairs"))}
+    assert by["L3 stairs up"].params["rise_m"] == 0.08 and by["L7 stairs down"].params["rise_m"] == 0.16
+    assert by["L3 stairs up"].z_end == pytest.approx(4 * 0.08)
+    by = {s.label: s for s in C.gauntlet_sections(C.ladder_course(course, "slope"))}
+    assert by["L2 ramp up"].params["angle_deg"] == 10 and by["L2 ramp down"].params["angle_deg"] == -10
+    by = {s.label: s for s in C.gauntlet_sections(C.ladder_course(course, "slippery_decline"))}
+    assert by["L4 approach"].friction == 1.0 and by["L4 slippery decline"].friction == 0.25
+    fr = C.gauntlet_sections(C.ladder_course(course, "friction"))
+    assert [s.friction for s in fr[1:-1]] == [0.8, 0.6, 0.45, 0.35, 0.25, 0.18, 0.12]
+    with pytest.raises(ValueError, match="No ladder"):
+        C.ladder_course(course, "lava")
+
+
+@pytest.mark.parametrize("name", ["slope", "stairs", "curb", "slippery_decline", "wave"])
+def test_ladder_profile_is_continuous_except_at_jumps(name):
+    lc = C.ladder_course(C.load_course("ladders"), name)
+    sections = C.gauntlet_sections(lc)
+    jumps, z = _profile_jumps(lc, 0.3)
+    allowed = [s for s in sections if s.type in C.JUMP_TYPES]
+    for xj in jumps:
+        assert any(s.x0 - 0.002 <= xj <= s.x1 + 0.002 for s in allowed), f"step at {xj:.3f}"
+    assert z[-1] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_ladder_scoring():
+    course = C.load_course("ladders")
+    lc = C.ladder_course(course, "stairs")
+    by = {s.label: s for s in C.gauntlet_sections(lc)}
+    ctrl = E.GauntletController(lc, 4, RANGES, dt=0.02, time_limit_s=60.0)
+    stop1 = (by["L3 stairs up"].x0 + by["L3 stairs up"].x1) / 2     # falls in L3 stairs up
+    stop2 = (by["L1 landing"].x0 + by["L1 landing"].x1) / 2         # gets stuck on L1's landing
+    stop3 = (by["L2 rest"].x0 + by["L2 rest"].x1) / 2               # falls in L2 rest
+    t1, t3 = int((stop1 - 1.0) / 0.02), int((stop3 - 1.0) / 0.02)
+
+    def x_of_t(t):
+        walk = 1.0 + t * 0.02
+        return np.array([walk, min(walk, stop1), min(walk, stop2), min(walk, stop3)])
+
+    rollout = _drive(ctrl, x_of_t, fell_at={1: t1 + 5, 3: t3 + 5})
+    rows, robots = E.gauntlet_results(rollout, ctrl, 10.0, ["FR", "FL", "RR", "RL"])
+    scores = E.ladder_scores([{"seed": 1000, **r} for r in rows], lc)
+    sc = {r["robot"]: r for r in scores}
+    assert [sc[i]["score"] for i in range(4)] == [7, 2, 0, 1]
+    assert sc[0]["outcome"] == "finished" and sc[0]["value"] == 0.16
+    assert sc[1]["outcome"] == "fell" and sc[1]["end_section"] == "L3 stairs up"
+    assert sc[1]["value"] == 0.06 and sc[1]["unit"] == "m"
+    assert sc[2]["outcome"] == "stuck" and sc[2]["end_section"] == "L1 landing" and sc[2]["value"] is None
+    assert sc[3]["end_section"] == "L2 rest"
+    levels = course["ladders"]["stairs"]["levels"]
+    a = E.aggregate_ladder(scores, levels, "m")
+    assert a["median"] == 1 and a["median_value"] == 0.04          # lower median of 0, 1, 2, 7
+    assert a["q25"] == pytest.approx(0.75) and a["q75"] == pytest.approx(3.25)
+    assert a["completing"][:3] == [0.75, 0.5, 0.25] and a["completing"][-1] == 0.25
+    assert a["finished"] == 1 and a["common_failure"] == "L3 stairs up"
+    text = E.format_ladders({"run_a": scores, "run_b": scores}, course)
+    assert "Capability profile" in text and "1 (0.04 m)" in text and "L3 stairs up (fell 1)" in text
+    assert E.format_value(15.0, "deg") == "15 deg" and E.format_value(0.35, "mu") == "mu 0.35"
+
+
+def test_ladder_profile_png(tmp_path):
+    pytest.importorskip("matplotlib")
+    course = C.load_course("ladders")
+    scores = []
+    for name, spec in course["ladders"].items():
+        for r, sc in enumerate([0, 2, 3, len(spec["levels"])]):
+            scores.append({"robot": r, "ladder": name, "score": sc, "outcome": "fell",
+                           "end_section": "x"})
+    path = E.plot_ladder_profile({"a": scores, "b": scores[:-8]}, course, tmp_path / "profile.png")
+    assert path.stat().st_size > 10_000
+
+
+# ---- graded and directional gauntlets -----------------------------------------------------
+
+GRADED_PARTS = ["low friction", "ramp up", "ramp top", "ramp down", "rough", "stairs up",
+                "stairs landing", "stairs down", "blocks", "curb up", "curb top", "curb down", "wave"]
+
+
+@pytest.mark.parametrize("y", [0.0, 0.7])
+def test_graded_gauntlet(y):
+    course = C.load_course("gauntlet_graded")
+    sections = C.gauntlet_sections(course)
+    assert sections[0].label == "start" and sections[-1].label == "finish"
+    for k in range(1, 6):
+        assert [s.label for s in sections if C.section_level(s.label) == k] == \
+            [f"L{k} {p}" for p in GRADED_PARTS]
+    by = {s.label: s for s in sections}
+    for key, part in (("angle_deg", "ramp up"), ("amplitude_m", "rough"), ("rise_m", "stairs up"),
+                      ("h_max_m", "blocks"), ("height_m", "curb up"), ("amplitude_m", "wave")):
+        v = [by[f"L{k} {part}"].params[key] for k in range(1, 6)]
+        assert v == sorted(v) and len(set(v)) == 5, part           # harder every level
+    mu = [by[f"L{k} low friction"].friction for k in range(1, 6)]
+    assert mu == sorted(mu, reverse=True) and len(set(mu)) == 5
+    jumps, z = _profile_jumps(course, y)
+    allowed = [s for s in sections if s.type in C.JUMP_TYPES]
+    for xj in jumps:
+        assert any(s.x0 - 0.002 <= xj <= s.x1 + 0.002 for s in allowed), f"step at {xj:.3f}"
+    for a, b in zip(sections, sections[1:]):
+        if b.type not in ("stairs", "curb"):
+            assert b.z_start == pytest.approx(a.z_end)
+    assert sections[-1].z_end == pytest.approx(0.0, abs=1e-9)
+
+
+def test_furthest_level_line():
+    course = C.load_course("gauntlet_graded")
+    by = {s.label: s for s in C.gauntlet_sections(course)}
+    ctrl = E.GauntletController(course, 3, RANGES, dt=0.02, time_limit_s=200.0)
+    stops = [(by["L2 rough"].x0 + 0.5), by["L3 wave"].x0 + 0.5, by["L4 blocks"].x0 + 0.5]
+    rollout = _drive(ctrl, lambda t: np.minimum(1.0 + t * 0.02, stops), T=8000)
+    rows, robots = E.gauntlet_results(rollout, ctrl, 10.0, ["FR", "FL", "RR", "RL"])
+    assert E.furthest_levels(rows) == [2, 3, 4]
+    assert "furthest level reached: median L3 of L5" in E.format_gauntlet("g", rows, robots)
+    assert E.furthest_levels([{"label": "start", "robot": 0, "entered": True}]) == []
+
+
+DIR_GAINS = dict(k_y=1.0, vy_max=0.3, k_yaw=1.5, wz_max=1.0, ranges=RANGES)
+
+
+@pytest.mark.parametrize("mode", [m for m in C.MODE_YAW_DEG if m != "spin"])
+def test_directional_command_moves_along_plus_x(mode):
+    yaw = math.radians(C.MODE_YAW_DEG[mode])
+    for err in (0.0, 0.1):                          # on the mode's yaw, and 0.1 rad off it
+        cmd = E.directional_command([0.0], [yaw + err], [0.0], 0.4, yaw, **DIR_GAINS)[0]
+        c, s = math.cos(yaw + err), math.sin(yaw + err)
+        world = (c * cmd[0] - s * cmd[1], s * cmd[0] + c * cmd[1])   # body -> world
+        assert world[0] == pytest.approx(0.4) and world[1] == pytest.approx(0.0, abs=1e-12)
+        assert cmd[2] == pytest.approx(-1.5 * err)                    # turns back to the mode yaw
+    # left of the lane: the world-frame correction points to -y whatever the heading
+    cmd = E.directional_command([0.2], [yaw], [0.0], 0.4, yaw, **DIR_GAINS)[0]
+    world_y = math.sin(yaw) * cmd[0] + math.cos(yaw) * cmd[1]
+    assert world_y == pytest.approx(-0.2)
+
+
+def test_directional_signs_and_planar_clip():
+    left = E.directional_command([0.0], [-math.pi / 2], [0.0], 0.35, -math.pi / 2, **DIR_GAINS)[0]
+    assert left[0] == pytest.approx(0.0, abs=1e-12) and left[1] == pytest.approx(0.35)  # left side leads
+    back = E.directional_command([0.0], [math.pi], [0.0], 0.5, math.pi, **DIR_GAINS)[0]
+    assert back[0] == pytest.approx(-0.5)
+    # planar clip scales the (vx, vy) vector, keeping its direction
+    cmd = E.clip_planar(np.array([[1.5, 0.75, 2.0], [0.3, -1.0, 0.0], [0.5, 0.2, -0.3]]), RANGES)
+    assert cmd[0].tolist() == pytest.approx([1.0, 0.5, 1.0])
+    assert cmd[1].tolist() == pytest.approx([0.15, -0.5, 0.0])
+    assert cmd[2].tolist() == pytest.approx([0.5, 0.2, -0.3])
+    fast = E.directional_command([0.0], [-math.pi / 4], [0.0], 2.0, -math.pi / 4, **DIR_GAINS)[0]
+    assert fast[0] == pytest.approx(fast[1]) and fast[1] == pytest.approx(0.5)   # diagonal kept
+    # transition: a large yaw error slows travel to transition_speed_factor
+    turning = E.directional_command([0.0], [0.0], [0.0], 0.35, -math.pi / 2, **DIR_GAINS)[0]
+    assert turning[0] == pytest.approx(0.35 * 0.3) and turning[2] == pytest.approx(-1.0)
+    near = E.directional_command([0.0], [0.0], [0.0], 0.35, math.radians(-14), **DIR_GAINS)[0]
+    assert near[0] == pytest.approx(0.35) or np.hypot(*near[:2]) == pytest.approx(0.35)
+    slow = E.directional_command([0.0], [0.0], [0.0], 0.35, math.radians(-16), **DIR_GAINS,
+                                 transition_speed_factor=0.5)[0]
+    assert np.hypot(*slow[:2]) == pytest.approx(0.175)
+
+
+def test_directional_controller_spin_and_modes():
+    course = C.load_course("gauntlet_directions")
+    assert C.is_directional(course) and not C.is_directional(C.load_course("gauntlet"))
+    sections = C.gauntlet_sections(course)
+    assert 50.0 < sections[-1].x1 < 60.0
+    by = {s.label: s for s in sections}
+    assert by["left"].mode == "left" and by["back curb up"].mode == "backward"
+    assert by["diag rough"].mode == "diag_fr" and by["spin"].params["spin_deg"] == 360
+    dt = 0.02
+    ctrl = E.GauntletController(course, 1, RANGES, dt=dt)
+    assert ctrl.directional and ctrl.speeds[by["left"].index] == 0.35
+    assert ctrl.speeds[by["backward"].index] == 0.5 and ctrl.speeds[by["start"].index] == 0.8
+    travel = sum(s.length / v for s, v in zip(sections, ctrl.speeds)) + 2 * math.pi / 1.0
+    assert ctrl.time_limit_s == pytest.approx(3.0 * travel)
+    # in "left", already facing -90 deg: walks sideways
+    pos = np.array([[ctrl.x0 + by["left"].x0 + 1.0, ctrl.lane_y[0], 0.0]])
+    cmd = ctrl.command(pos, np.array([-math.pi / 2]))[0]
+    assert cmd[1] == pytest.approx(0.35) and abs(cmd[0]) < 1e-9
+    # spin: speed 0 and wz = wz_max until 360 deg are turned (unwrapped), then forward
+    pos = np.array([[ctrl.x0 + by["spin"].x0 + 0.05, ctrl.lane_y[0], 0.0]])
+    yaw, steps = 0.0, 0
+    while True:
+        cmd = ctrl.command(pos, np.array([E.wrap_pi(yaw)]))[0]
+        if cmd[2] != pytest.approx(1.0) or abs(cmd[0]) > 1e-9:
+            break
+        assert cmd[0] == 0.0 and cmd[1] == 0.0
+        yaw += cmd[2] * dt
+        pos[0, 0] += 0.0005                          # a little drift
+        steps += 1
+        assert steps < 1000
+    assert steps == pytest.approx(2 * math.pi / dt, abs=2)
+    assert cmd[0] == pytest.approx(0.8, abs=1e-3)    # forward again after the spin
+    st = ctrl.spin[by["spin"].index]
+    assert st["end"][0] - st["start"][0] == steps
+    assert np.linalg.norm(st["end_xy"][0] - st["start_xy"][0]) == pytest.approx(steps * 0.0005)
+    # still in the spin section afterwards: no second spin
+    cmd = ctrl.command(pos, np.array([E.wrap_pi(yaw)]))[0]
+    assert cmd[0] == pytest.approx(0.8, abs=1e-3)
+
+
+def test_directional_results_metrics():
+    course = C.load_course("gauntlet_directions")
+    sections = C.gauntlet_sections(course)
+    ctrl = E.GauntletController(course, 1, RANGES, dt=0.02, time_limit_s=100.0)
+    off = math.radians(10)
+    T = 2000
+    qpos = np.zeros((T, 1, 19), np.float32)
+    x = 1.0 + np.arange(T) * 0.02
+    qpos[:, 0, 0] = ctrl.x0 + x
+    qpos[:, 0, 1] = ctrl.lane_y[0]
+    idx = ctrl.section_at(x)
+    yaw = ctrl.yaw_des[idx] + off
+    qpos[:, 0, 3], qpos[:, 0, 6] = np.cos(yaw / 2), np.sin(yaw / 2)
+    z = np.zeros(1, bool)
+    for t in range(T):
+        if ctrl.update(t, qpos[t, :, :3].astype(float), yaw[t:t + 1], z, z):
+            break
+    rollout = _synthetic_rollout(qpos[:t + 1])
+    rollout["command"] = np.tile(np.array([0.8, 0.3, 0.4], np.float32), (t + 1, 1, 1))
+    rollout["base_ang_vel_b"] = np.zeros((t + 1, 1, 3), np.float32)
+    rows, robots = E.gauntlet_results(rollout, ctrl, 10.0, ["FR", "FL", "RR", "RL"])
+    r = {row["label"]: row for row in rows}
+    assert r["left"]["mode"] == "left"
+    assert r["left"]["heading_rms_deg"] == pytest.approx(10.0, abs=0.01)
+    assert r["left"]["settle_s"] == 0.0
+    assert r["left"]["track_planar_rmse"] == pytest.approx(math.hypot(0.2, 0.3), abs=1e-5)
+    assert r["left"]["track_yaw_rmse"] == pytest.approx(0.4, abs=1e-6)
+    assert r["spin"]["spin_done"] is False and r["spin"]["spin_time_s"] is None
+    text = E.format_gauntlet("d", rows, robots)
+    assert "hdg deg" in text and "v rmse" in text and "spin 'spin'" in text
+    assert sections[1].label == "left"
+
+
 def test_eval_robot_strips_randomization():
     from quadruped_rl.robots import load_robot
 
@@ -455,6 +800,14 @@ def test_preview_pngs(tmp_path):
     paths = E.preview_gauntlet(C.load_course("gauntlet"), tmp_path)
     paths += E.preview_beacon(C.load_course("beacon"), tmp_path, k=4, seed=1000)
     assert [p.name for p in paths] == ["gauntlet_top.png", "gauntlet_side.png", "beacon_top.png"]
+    assert all(p.stat().st_size > 10_000 for p in paths)
+
+
+def test_preview_ladders_and_directions(tmp_path):
+    pytest.importorskip("matplotlib")
+    paths = E.preview_ladders(C.load_course("ladders"), tmp_path / "l", ["stairs", "friction"])
+    paths += E.preview_gauntlet(C.load_course("gauntlet_directions"), tmp_path / "d")
+    assert [p.name for p in paths] == ["ladders_side.png", "gauntlet_top.png", "gauntlet_side.png"]
     assert all(p.stat().st_size > 10_000 for p in paths)
 
 
@@ -577,6 +930,33 @@ def test_beacon_smoke_with_video(tmp_path):
     yaw = E.yaw_from_quat(rollout["qpos"][0, :, 3:7])
     want = np.arctan2(*(goals - starts)[:, ::-1].T)
     assert np.allclose(E.wrap_pi(yaw - want), 0.0, atol=0.1)
+
+
+@pytest.mark.sim
+def test_ladders_smoke(tmp_path):
+    import csv
+
+    out, _ = _course_script(tmp_path, "ladders", "--tracks", "friction", "curb")
+    with open(out / "results.csv") as f:
+        rows = list(csv.DictReader(f))
+    course = C.load_course("ladders")
+    n = {k: len(C.gauntlet_sections(C.ladder_course(course, k))) for k in ("friction", "curb")}
+    assert len(rows) == 2 * (n["friction"] + n["curb"])
+    assert [r["ladder"] for r in rows[::2 * n["friction"]]][:1] == ["friction"]
+    with open(out / "ladder_scores.csv") as f:
+        scores = list(csv.DictReader(f))
+    assert len(scores) == 4 and {r["ladder"] for r in scores} == {"friction", "curb"}
+    assert all(r["score"] == "0" for r in scores)                # 1 s of zero actions
+    text = (out / "summary.txt").read_text()
+    assert "Capability profile" in text and "L1 curb up" in text
+    assert (out / "profile.png").stat().st_size > 10_000
+
+
+@pytest.mark.sim
+def test_directions_smoke(tmp_path):
+    out, _ = _course_script(tmp_path, "gauntlet_directions")
+    text = (out / "summary.txt").read_text()
+    assert "hdg deg" in text and "side slippery" in text
 
 
 def test_course_script_refuses_tracking_runs(tmp_path):

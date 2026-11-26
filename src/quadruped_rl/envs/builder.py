@@ -330,7 +330,9 @@ def make_env_cfg(robot, task: dict, num_envs: int, play: bool = False,
             azimuth=90.0,
         ),
         sim=SimulationCfg(
-            nconmax=35 if generator else None,
+            # course terrains: the model's initial pose (every robot at the world origin) can
+            # sit inside a course feature (stairs) and overflow 35 contacts at put_data
+            nconmax=(100 if task["terrain"].get("type") == "course" else 35) if generator else None,
             njmax=1500 if generator else 300,
             contact_sensor_maxmatch=500 if generator else 64,
             mujoco=MujocoCfg(

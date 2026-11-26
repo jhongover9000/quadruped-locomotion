@@ -1,0 +1,55 @@
+# Directional gauntlet: the track is straight along +x and the robot always travels +x, but
+# each section sets the body heading relative to the travel direction (`mode`), so the same
+# lane tests sideways, backward and diagonal walking and turning on the spot: the whole
+# command space (vy, negative vx, combined commands) on terrain.
+# Held out for evaluation only (scripts/course.py --course gauntlet_directions).
+#
+# Extra section fields (any gauntlet; see gauntlet.yaml for the section types):
+#   mode       forward (body yaw 0, the default), backward (180), left (-90: the robot's left
+#              side leads), right (+90), diag_fl (-45), diag_fr (+45), diag_bl (-135),
+#              diag_br (+135), or spin (turn on the spot by spin_deg on entry, then forward)
+#   speed_m_s  travel speed along +x in the section (default: controller.speed for forward
+#              and spin, controller.mode_speeds for the others)
+#   spin_deg   spin sections: total turn, sign = direction (+ = counter-clockwise)
+kind: gauntlet
+seed: 2301                 # rough geometry (the same in every lane)
+lane_width_m: 2.0
+spawn_x_m: 1.0
+finish_margin_m: 1.0
+hfield_resolution_m: 0.05
+border_width_m: 10.0
+time_limit_factor: 3.0     # time limit = factor x (sum of section length / speed + spin time)
+default_seeds: [1000]      # sim seeds; disjoint from training run seeds (0..99)
+
+controller:                # v_w = (speed, -k_y lateral); wz = k_yaw wrap(mode yaw - yaw); (vx, vy) = R(-yaw) v_w
+  speed: 0.8               # m/s, forward (and after a spin); --speed overrides it
+  mode_speeds: {backward: 0.5, left: 0.35, right: 0.35,
+                diag_fl: 0.5, diag_fr: 0.5, diag_bl: 0.5, diag_br: 0.5}
+  k_y: 1.0                 # 1/s
+  vy_max: 0.3              # m/s, world-frame lateral correction
+  k_yaw: 1.5               # 1/s
+  wz_max: 1.0              # rad/s; also the spin rate
+  transition_deg: 15.0     # while the yaw error exceeds this, travel speed x transition_speed_factor
+  transition_speed_factor: 0.3
+
+sections:
+  - {type: flat,   length_m: 3.0, mode: forward,  label: start}
+  - {type: flat,   length_m: 4.0, mode: left,     label: left}
+  - {type: flat,   length_m: 4.0, mode: right,    label: right}
+  - {type: flat,   length_m: 4.0, mode: backward, label: backward}
+  - {type: flat,   length_m: 4.0, mode: diag_fl,  label: diagonal}
+  - {type: flat,   length_m: 2.0, mode: spin, spin_deg: 360, label: spin}
+  - {type: ramp,   length_m: 4.0, angle_deg: 10,  mode: left,  label: side up 10}
+  - {type: flat,   length_m: 1.5,                 mode: left,  label: side top}
+  - {type: ramp,   length_m: 4.0, angle_deg: -10, mode: right, label: side down 10}
+  - {type: ramp,   length_m: 4.0, angle_deg: 10,  mode: forward,  label: fwd up 10}
+  - {type: ramp,   length_m: 4.0, angle_deg: -10, mode: backward, label: back down 10}
+  - {type: rough,  length_m: 5.0, amplitude_m: 0.03, cell_m: 0.1, mode: diag_fr, label: diag rough}
+  - {type: flat,   length_m: 4.0, friction: 0.4, mode: left, label: side slippery}
+  - {type: curb,   length_m: 0.5, height_m: 0.05, direction: up,   mode: backward, label: back curb up}
+  - {type: flat,   length_m: 2.0,                                  mode: backward, label: back curb top}
+  - {type: curb,   length_m: 0.5, height_m: 0.05, direction: down, mode: backward, label: back curb down}
+  - {type: stairs, n: 3, rise_m: 0.06, tread_m: 0.30, direction: up,   mode: forward, label: fwd stairs up}
+  - {type: flat,   length_m: 1.5,                                      mode: forward, label: fwd stairs landing}
+  - {type: stairs, n: 3, rise_m: 0.06, tread_m: 0.30, direction: down, mode: forward, label: fwd stairs down}
+  - {type: flat,   length_m: 3.0, mode: forward,  label: finish}

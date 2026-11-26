@@ -3,6 +3,8 @@
     python scripts/course.py <run> [<run> ...] --course gauntlet          # one lane per robot
     python scripts/course.py <run> --course beacon --seeds 1000 1001 1002  # walk to a beacon
     python scripts/course.py <run> --course gauntlet --video --robots 0 3  # + follow-camera videos
+    python scripts/course.py <run> [<run> ...] --course ladders [--tracks stairs curb]   # one ladder at a time
+    python scripts/course.py <run> --course gauntlet_directions             # sideways, backward, spin
     python scripts/course.py --robot astra_stance2 --course gauntlet --preview   # course PNGs only
     python scripts/course.py --robot go1 --course beacon --num-envs 2 --time-limit 5   # zero actions
 
@@ -11,6 +13,14 @@ Courses (configs/courses/<name>.yaml; envs/courses.py builds them):
     gauntlet   a straight ~55 m track of sections (low friction, ramps of 10 and 20 deg,
                rough, stairs, blocks, curbs, a slippery decline, waves), one lane per robot.
                A lane-following controller commands vx = --speed and steers back to the lane.
+    gauntlet_graded   one mixed track of levels L1..L5, every challenge type in each level,
+               harder each level; the summary gives the furthest level reached.
+    gauntlet_directions   a ~57 m track walked facing different ways (sideways, backward,
+               diagonal) and with a spin on the spot; adds heading error and command tracking.
+    ladders    one track per challenge type (slope, stairs, curb, friction, slippery decline,
+               rough, blocks, wave) whose levels rise past the training range. Each ladder is
+               its own pass with every robot on an identical lane; a robot's score is the
+               highest level it fully exits. --tracks picks ladders (default: all).
     beacon     a 60 x 60 m field of rocky, hilly ground with friction patches; each robot
                walks from its start to a goal 20 m away with a shared homing controller.
                --seeds choose the start and goal pairs (default: the course's default_seeds,
@@ -23,13 +33,16 @@ Velocity-command runs only (ppo, ppo_rslrl, amp, mpc).
 
 Writes <out>/ (default outputs/courses/<time>_<course>/):
 
-    results.csv    one row per robot and section (gauntlet) or per attempt (beacon), with
-                   run and seed columns
-    summary.txt    aggregate tables per run, then a side-by-side comparison
+    results.csv    one row per robot and section (gauntlet, ladders: with a ladder column) or
+                   per attempt (beacon), with run and seed columns
+    ladder_scores.csv   ladders: one row per robot and ladder (score, where and how it ended)
+    profile.png    ladders: median level per ladder and run, with the IQR
+    summary.txt    aggregate tables per run, then a side-by-side comparison (ladders: the
+                   capability profile first)
     meta.json      the resolved course, seeds, git hash, checkpoints, evaluation conditions
     recordings/<run>/seed<k>/   with --video: video_robot<r>.mp4 and rollout.npz,
                    model.mjb.gz, meta.json (python scripts/replay.py <dir> works on it)
-    *.png          with --preview: gauntlet_top/side.png or beacon_top.png
+    *.png          with --preview: gauntlet_top/side.png, ladders_side.png or beacon_top.png
 
 Runs on the GPU like record.py, or on the CPU with --device cpu (slow: use few robots and
 --time-limit).
@@ -88,6 +101,7 @@ def main() -> None:
     p.add_argument("--num-envs", type=int, default=16, help="robots (gauntlet: lanes)")
     p.add_argument("--seeds", type=int, nargs="+", help="default: the course's default_seeds")
     p.add_argument("--speed", type=float, help="gauntlet target speed, m/s (default: the YAML's)")
+    p.add_argument("--tracks", nargs="+", help="ladders only: which ladders to run (default: all)")
     p.add_argument("--time-limit", type=float, help="s, overrides the course's time limit")
     p.add_argument("--checkpoint", nargs="+",
                    help="checkpoint per run (one name for all runs, or one per run; default latest)")
@@ -107,8 +121,20 @@ def main() -> None:
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     out = args.out or OUTPUT_DIR / "courses" / f"{stamp}_{kind}{'_preview' if args.preview else ''}"
 
+    tracks = None
+    if args.tracks:
+        if kind != "ladders":
+            sys.exit("--tracks is for the ladders course only")
+        unknown = [t for t in args.tracks if t not in C.ladder_names(course)]
+        if unknown:
+            sys.exit(f"Unknown ladders {unknown}; the course has {C.ladder_names(course)}")
+        tracks = list(args.tracks)
+    elif kind == "ladders":
+        tracks = C.ladder_names(course)
+
     if args.preview:
         paths = (E.preview_gauntlet(course, out) if kind == "gauntlet" else
+                 E.preview_ladders(course, out, tracks) if kind == "ladders" else
                  E.preview_beacon(course, out, args.num_envs, seeds[0]))
         for path in paths:
             print(f"Saved {path}")
@@ -130,8 +156,24 @@ def main() -> None:
 
     t_start = time.perf_counter()
     rows_all, per_run_rows, blocks, run_meta = [], {}, [], []
+    scores_all, per_run_scores = [], {}
+    repeated = len(set(runs)) < len(runs)             # one run at several checkpoints
     for run_dir, ckpt in zip(runs, ckpts):
         label = run_label(run_dir, args.robot)
+        if repeated and ckpt:
+            label += f"@{Path(ckpt).stem}"
+        if kind == "ladders":                         # one pass per ladder, all robots on it
+            per_run_scores[label] = []
+            for name in tracks:
+                lc = C.ladder_course(course, name)
+                rows_l, robots_l = run_course(args, lc, run_dir, ckpt, seeds, label, out,
+                                              run_meta, tag=name)
+                rows_all += [{"run": label, "ladder": name, **r} for r in rows_l]
+                scores = E.ladder_scores(rows_l, lc)
+                per_run_scores[label] += scores
+                scores_all += [{"run": label, **r} for r in scores]
+                blocks.append(E.format_gauntlet(f"{label}, ladder {name}", rows_l, robots_l))
+            continue
         rows_run, robots_run = run_course(args, course, run_dir, ckpt, seeds, label, out, run_meta)
         for r in rows_run:
             rows_all.append({"run": label, **r})
@@ -144,12 +186,20 @@ def main() -> None:
     header = (f"Course: {kind} ({args.course})   seeds: {seeds}   robots per seed: {args.num_envs}\n"
               f"Conditions: no domain randomization, no observation noise, deterministic actions, "
               f"exact start poses; an attempt ends at its first fall.\n")
-    compare = (E.compare_gauntlet(per_run_rows) if kind == "gauntlet" else E.compare_beacon(per_run_rows))
-    text = header + "\n" + "\n".join(blocks) + "\n" + compare
+    if kind == "ladders":
+        E.write_csv(scores_all, out / "ladder_scores.csv")
+        E.plot_ladder_profile(per_run_scores, course, out / "profile.png")
+        text = (header + f"Ladders: {', '.join(tracks)}\n\n" + E.format_ladders(per_run_scores, course)
+                + "\nPer ladder and section\n\n" + "\n".join(blocks))
+    else:
+        compare = (E.compare_gauntlet(per_run_rows) if kind == "gauntlet"
+                   else E.compare_beacon(per_run_rows))
+        text = header + "\n" + "\n".join(blocks) + "\n" + compare
     (out / "summary.txt").write_text(text)
     meta = {"created": datetime.datetime.now().isoformat(timespec="seconds"), "git": git_hash(),
             "course_name": args.course, "course": course, "seeds": seeds, "num_envs": args.num_envs,
-            "speed": args.speed, "time_limit_override_s": args.time_limit, "runs": run_meta,
+            "speed": args.speed, "time_limit_override_s": args.time_limit, "tracks": tracks,
+            "runs": run_meta,
             "command": " ".join(sys.argv)}
     (out / "meta.json").write_text(json.dumps(meta, indent=2, default=str))
     print("\n" + text)
@@ -157,7 +207,9 @@ def main() -> None:
 
 
 def run_course(args, course: dict, run_dir: Path | None, ckpt: str | None, seeds: list[int],
-               label: str, out: Path, run_meta: list) -> tuple[list[dict], list[dict]]:
+               label: str, out: Path, run_meta: list, tag: str | None = None
+               ) -> tuple[list[dict], list[dict]]:
+    """Run one gauntlet-kind course (a ladder: ``tag`` = its name) or the beacon field."""
     import mujoco
 
     from quadruped_rl.evaluation import render
@@ -186,7 +238,7 @@ def run_course(args, course: dict, run_dir: Path | None, ckpt: str | None, seeds
     dt = float(env.step_dt)
     frame = C.course_frame(course, args.num_envs)
     fld = C.beacon_field(course) if kind == "beacon" else None
-    print(f"{label}: {kind}, {args.num_envs} robots, seeds {seeds}"
+    print(f"{label}: {kind}{f' ({tag})' if tag else ''}, {args.num_envs} robots, seeds {seeds}"
           + (f", checkpoint {run.checkpoint}" if run.checkpoint else ", zero actions"))
 
     rows, robots_all = [], []
@@ -217,24 +269,29 @@ def run_course(args, course: dict, run_dir: Path | None, ckpt: str | None, seeds
         rows += [{"seed": seed, **r} for r in seed_rows]
 
         if args.video:
-            rec = out / "recordings" / label / f"seed{seed}"
+            rec = out / "recordings" / label / (tag or "") / f"seed{seed}"
             meta = {"created": datetime.datetime.now().isoformat(timespec="seconds"),
                     "run_dir": str(run.run_dir) if run.run_dir else None, "run_name": label,
                     "checkpoint": str(run.checkpoint) if run.checkpoint else None,
                     "checkpoint_name": run.checkpoint.name if run.checkpoint else "",
                     "task_name": run.task.get("name"), "robot_name": run.robot.name,
-                    "scenario": f"course {kind}", "course": kind, "segments": [],
+                    "scenario": f"course {args.course}{f' {tag}' if tag else ''}", "course": kind, "segments": [],
                     "dt": dt, "num_envs": args.num_envs, "seed": seed, "root_body": root,
                     "mass": mass, "joint_names": list(run.robot.joint_names), "foot_names": legs,
                     "continuous_torque": continuous, "kind": run.kind,
                     "goals_w": goals_w.tolist() if goals_w is not None else None,
                     "outcomes": [str(s) for s in ctrl.attempts.status]}
+            if kind == "gauntlet":                    # for the HUD: section and mode
+                meta["course_x0"] = frame["x0"]
+                meta["course_sections"] = [{"label": s.label, "x0": s.x0, "x1": s.x1,
+                                            "mode": s.mode} for s in C.gauntlet_sections(course)]
             render.save_recording(rec, rollout, model, meta)
             for r in args.robots:
                 render.render_video(model, rollout, meta, [rec / f"video_robot{r}.mp4"], robot=r)
             print(f"  recording: {rec}  (python scripts/replay.py {rec})")
 
-    run_meta.append({"run": label, "run_dir": str(run_dir) if run_dir else None,
+    run_meta.append({"run": label, **({"ladder": tag} if tag else {}),
+                     "run_dir": str(run_dir) if run_dir else None,
                      "checkpoint": str(run.checkpoint) if run.checkpoint else None,
                      "robot": run.robot.name, "task": run.task.get("name"),
                      "command_ranges": ranges, "dt": dt, "mass": mass,
